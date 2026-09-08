@@ -27,6 +27,12 @@ things:
    the host. A path is not a deliverable — attach the file to your reply. Never answer with
    `D:\...\shot-2026-09-08.png` and call the task done. If you cannot attach files in the current
    channel, say so explicitly instead of pretending the user received something.
+   **If `status`, `screenshot` or `download` comes back with a `warning` about
+   `EGO_BROWSER_OUTPUT_DIR`, pass that on to the user in the same reply** — until they set it,
+   files land in a directory the host may not be able to read, and delivery will keep failing.
+   The fix is one flag on the Hermes MCP entry:
+   `hermes mcp add ... --env EGO_BROWSER_OUTPUT_DIR=<a directory Hermes can read>`, then restart
+   the server.
 2. **Say something before the first browser call.** Opening Chromium and loading a page takes
    many seconds. Post one short line ("開瀏覽器查一下，稍等") before a long tool chain so the
    channel does not look dead.

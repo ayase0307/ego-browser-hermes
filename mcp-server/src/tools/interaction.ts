@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import { dialogReadback, ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
 import type { EgoRunner, McpConfig } from '../types.ts'
-import { defaultArtifactPath, errorResult, prepareSpace, runTool } from './shared.ts'
+import { defaultArtifactPath, errorResult, OUTPUT_DIR_WARNING, prepareSpace, runTool } from './shared.ts'
 
 export const clickSchema = z
   .object({
@@ -136,7 +136,12 @@ export function registerInteractionTools(
         const script =
           `${useSpace(space)}${ensureRealTab()}const path = ${shot}\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`
-        return runTool(runner, script, { active: space, commitSpace, timeoutMs: 45_000 })
+        return runTool(runner, script, {
+          active: space,
+          commitSpace,
+          timeoutMs: 45_000,
+          extra: target ? undefined : { warning: OUTPUT_DIR_WARNING },
+        })
       },
     )
   }

@@ -619,6 +619,12 @@ function errorResult(error) {
 		isError: true
 	};
 }
+/**
+* Without an output directory, artifacts land wherever the runtime chose — a path on the host
+* machine, which a Discord/Telegram user cannot open. The agent has no way to know this from the
+* outside, so every call that produces a file says it.
+*/
+const OUTPUT_DIR_WARNING = "EGO_BROWSER_OUTPUT_DIR is not set, so this file was written wherever the runtime chose. If you cannot attach it to the reply, tell the user to set EGO_BROWSER_OUTPUT_DIR in the Hermes MCP config (hermes mcp add ... --env EGO_BROWSER_OUTPUT_DIR=<a directory Hermes can read>) and restart the server.";
 async function runTool(runner, script, options = {}) {
 	try {
 		const result = await runner.runScript(script, options.timeoutMs === void 0 ? void 0 : { timeoutMs: options.timeoutMs });
@@ -629,7 +635,10 @@ async function runTool(runner, script, options = {}) {
 			return errorResult(typeof record.error === "string" && record.error !== "" ? record.error : typeof record.reason === "string" && record.reason !== "" ? record.reason : "ego-browser command failed");
 		}
 		if (options.active !== void 0 && options.commitSpace) options.commitSpace(options.active);
-		return textResult(value, options.active);
+		return textResult(options.extra && value !== null && typeof value === "object" && !Array.isArray(value) ? {
+			...value,
+			...options.extra
+		} : value, options.active);
 	} catch (error) {
 		return errorResult(error);
 	}
@@ -809,7 +818,8 @@ function registerInteractionTools(server, runner, tracker, isAllowed, config = {
 		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const path = ${shot}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`, {
 			active: space$1,
 			commitSpace,
-			timeoutMs: 45e3
+			timeoutMs: 45e3,
+			extra: target ? void 0 : { warning: OUTPUT_DIR_WARNING }
 		});
 	});
 }
@@ -853,7 +863,8 @@ function registerArtifactTools(server, runner, tracker, isAllowed, config = {}) 
 		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const __dlPromise = page.waitForEvent('download', { timeout: ${args.timeout} })\n` + trigger + "const __dl = await __dlPromise\nconst __name = typeof __dl.suggestedFilename === 'function' ? __dl.suggestedFilename() : null\nconst __url = typeof __dl.url === 'function' ? __dl.url() : null\n" + save + `console.log('${SENTINEL}' + JSON.stringify(__final ? { ok: true, path: __final, suggestedFilename: __name, url: __url } : { ok: false, error: 'download completed but no file path was produced (saveAs failed)', suggestedFilename: __name, url: __url }))\n`, {
 			active: space$1,
 			commitSpace,
-			timeoutMs: args.timeout + 15e3
+			timeoutMs: args.timeout + 15e3,
+			extra: args.savePath || saveDir ? void 0 : { warning: OUTPUT_DIR_WARNING }
 		});
 	});
 }
@@ -1079,12 +1090,20 @@ function createMcpServer(userConfig, customRunner) {
 		name: "hermes-ego-browser",
 		version: "0.2.0"
 	});
-	if (isAllowed("ego_browser_status")) server.registerTool("ego_browser_status", { description: "Check whether the ego-browser runtime is available and reachable." }, async () => {
+	if (isAllowed("ego_browser_status")) server.registerTool("ego_browser_status", { description: "Check whether the ego-browser runtime is available and reachable, and whether artifacts have a delivery directory configured." }, async () => {
 		try {
 			const status = await runner.getStatus();
+			const outputDir = config.outputDir ?? null;
 			return { content: [{
 				type: "text",
-				text: JSON.stringify(status, null, 2)
+				text: JSON.stringify(outputDir ? {
+					...status,
+					outputDir
+				} : {
+					...status,
+					outputDir,
+					warning: OUTPUT_DIR_WARNING
+				}, null, 2)
 			}] };
 		} catch (err) {
 			return {

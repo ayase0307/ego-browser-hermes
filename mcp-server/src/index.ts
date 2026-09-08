@@ -10,6 +10,7 @@ import { registerArtifactTools } from './tools/artifacts.ts'
 import { registerInputTools } from './tools/input.ts'
 import { registerControlTools } from './tools/control.ts'
 import { ADVANCED_TOOLS, registerAdvancedTools } from './tools/advanced.ts'
+import { OUTPUT_DIR_WARNING } from './tools/shared.ts'
 import type { McpConfig, EgoRunner, McpToolResponse } from './types.ts'
 
 export { NodeEgoRunner } from './runtime/runner.ts'
@@ -76,16 +77,22 @@ export function createMcpServer(
     server.registerTool(
       'ego_browser_status',
       {
-        description: 'Check whether the ego-browser runtime is available and reachable.',
+        description:
+          'Check whether the ego-browser runtime is available and reachable, and whether artifacts have a delivery directory configured.',
       },
       async (): Promise<McpToolResponse> => {
         try {
           const status = await runner.getStatus()
+          const outputDir = config.outputDir ?? null
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify(status, null, 2),
+                text: JSON.stringify(
+                  outputDir ? { ...status, outputDir } : { ...status, outputDir, warning: OUTPUT_DIR_WARNING },
+                  null,
+                  2,
+                ),
               },
             ],
           }

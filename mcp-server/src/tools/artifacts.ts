@@ -5,7 +5,7 @@ import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
 import type { EgoRunner, McpConfig } from '../types.ts'
-import { defaultArtifactPath, errorResult, prepareSpace, runTool } from './shared.ts'
+import { defaultArtifactPath, errorResult, OUTPUT_DIR_WARNING, prepareSpace, runTool } from './shared.ts'
 
 export const uploadSchema = z.object({
   selector: z.string().min(1).max(4096),
@@ -74,7 +74,12 @@ export function registerArtifactTools(
           `console.log('${SENTINEL}' + JSON.stringify(__final ? ` +
           `{ ok: true, path: __final, suggestedFilename: __name, url: __url } : ` +
           `{ ok: false, error: 'download completed but no file path was produced (saveAs failed)', suggestedFilename: __name, url: __url }))\n`
-        return runTool(runner, script, { active: space, commitSpace, timeoutMs: args.timeout + 15_000 })
+        return runTool(runner, script, {
+          active: space,
+          commitSpace,
+          timeoutMs: args.timeout + 15_000,
+          extra: args.savePath || saveDir ? undefined : { warning: OUTPUT_DIR_WARNING },
+        })
       },
     )
   }

@@ -33,11 +33,24 @@ export function errorResult(error: unknown): McpToolResponse {
   }
 }
 
+/**
+ * Without an output directory, artifacts land wherever the runtime chose — a path on the host
+ * machine, which a Discord/Telegram user cannot open. The agent has no way to know this from the
+ * outside, so every call that produces a file says it.
+ */
+export const OUTPUT_DIR_WARNING =
+  'EGO_BROWSER_OUTPUT_DIR is not set, so this file was written wherever the runtime chose. ' +
+  'If you cannot attach it to the reply, tell the user to set EGO_BROWSER_OUTPUT_DIR in the ' +
+  'Hermes MCP config (hermes mcp add ... --env EGO_BROWSER_OUTPUT_DIR=<a directory Hermes can read>) ' +
+  'and restart the server.'
+
 export interface RunToolOptions {
   active?: string | number
   /** Called with the resolved space only after a successful run, to promote it to active. */
   commitSpace?: (space: string | number) => void
   timeoutMs?: number
+  /** Extra fields merged into a successful result (e.g. a configuration warning). */
+  extra?: Record<string, unknown>
 }
 
 export async function runTool(
@@ -67,7 +80,11 @@ export async function runTool(
     if (options.active !== undefined && options.commitSpace) {
       options.commitSpace(options.active)
     }
-    return textResult(value, options.active)
+    const merged =
+      options.extra && value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? { ...(value as Record<string, unknown>), ...options.extra }
+        : value
+    return textResult(merged, options.active)
   } catch (error) {
     return errorResult(error)
   }

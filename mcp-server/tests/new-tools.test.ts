@@ -185,6 +185,30 @@ describe('artifacts: files land where the agent host can attach them', () => {
     expect(last(scripts)).toContain('await page.screenshot()')
   })
 
+  it('warns in the result itself when artifacts have nowhere deliverable to land', async () => {
+    const { runner } = scriptedRunner({ ok: true, path: 'p' })
+    const server = createMcpServer({}, runner)
+    const shot = JSON.parse((await call(server, 'ego_browser_screenshot', {})).content[0].text)
+    expect(shot.warning).toContain('EGO_BROWSER_OUTPUT_DIR')
+    const dl = JSON.parse((await call(server, 'ego_browser_download', { timeout: 1000 })).content[0].text)
+    expect(dl.warning).toContain('EGO_BROWSER_OUTPUT_DIR')
+    const status = JSON.parse((await call(server, 'ego_browser_status', {})).content[0].text)
+    expect(status.outputDir).toBeNull()
+    expect(status.warning).toContain('EGO_BROWSER_OUTPUT_DIR')
+  })
+
+  it('stays quiet once an output directory is configured', async () => {
+    const configured = join(tmpdir(), 'ego-hermes-test-out2')
+    const { runner } = scriptedRunner({ ok: true, path: 'p' })
+    const server = createMcpServer({ outputDir: configured }, runner)
+    const shot = JSON.parse((await call(server, 'ego_browser_screenshot', {})).content[0].text)
+    expect(shot.warning).toBeUndefined()
+    const status = JSON.parse((await call(server, 'ego_browser_status', {})).content[0].text)
+    expect(status.outputDir).toBe(configured)
+    expect(status.warning).toBeUndefined()
+    rmSync(configured, { recursive: true, force: true })
+  })
+
   it('reports a download that produced no file as an error', async () => {
     const runner: EgoRunner = {
       runScript: async () => ({
