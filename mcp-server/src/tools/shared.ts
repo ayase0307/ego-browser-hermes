@@ -1,14 +1,7 @@
+import { mkdirSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import type { EgoRunner, McpToolResponse } from '../types.ts'
-
-/**
- * Resolve the task space a call should act on WITHOUT mutating the tracker.
- * A requested space is only promoted to "active" after the call succeeds (see
- * runTool's commitSpace), so a failed call never poisons the active-space pointer.
- */
-export function activeSpace(tracker: ActiveSpaceTracker, requested?: string): string | number {
-  return requested || tracker.current()
-}
 
 /**
  * Resolve the target space plus a commit callback for runTool. The space is
@@ -78,4 +71,20 @@ export async function runTool(
   } catch (error) {
     return errorResult(error)
   }
+}
+
+/**
+ * Where an artifact (screenshot/download) should be written when the caller gave no path.
+ * Returning a path inside a known output directory is what lets the agent host attach the
+ * file to a chat message (Discord/Telegram) instead of quoting a path the user cannot open.
+ */
+export function defaultArtifactPath(outputDir: string | undefined, prefix: string, ext: string): string | undefined {
+  if (!outputDir || outputDir.trim() === '' || !isAbsolute(outputDir)) return undefined
+  try {
+    mkdirSync(outputDir, { recursive: true })
+  } catch {
+    return undefined
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return join(outputDir, `${prefix}-${stamp}${ext}`)
 }

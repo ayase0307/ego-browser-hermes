@@ -3,8 +3,8 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
-import type { EgoRunner } from '../types.ts'
-import { errorResult, prepareSpace, runTool } from './shared.ts'
+import type { EgoRunner, McpConfig } from '../types.ts'
+import { defaultArtifactPath, errorResult, prepareSpace, runTool } from './shared.ts'
 
 export const clickSchema = z
   .object({
@@ -43,6 +43,7 @@ export function registerInteractionTools(
   runner: EgoRunner,
   tracker: ActiveSpaceTracker,
   isAllowed: (name: string) => boolean,
+  config: Partial<McpConfig> = {},
 ): void {
   if (isAllowed('ego_browser_click')) {
     server.registerTool(
@@ -113,13 +114,15 @@ export function registerInteractionTools(
     server.registerTool(
       'ego_browser_screenshot',
       {
-        description: 'Capture a page or element screenshot and return the runtime-provided absolute file path.',
+        description:
+          'Capture a page or element screenshot and return its absolute file path. With EGO_BROWSER_OUTPUT_DIR set, the file lands there so the agent host can attach it to the chat.',
         inputSchema: screenshotSchema,
       },
       async (args) => {
         if (args.path && !isAbsolute(args.path)) return errorResult('Screenshot path must be absolute.')
         const { space, commitSpace } = prepareSpace(tracker, args.space)
-        const options = args.path ? `{ path: ${j(args.path)} }` : ''
+        const target = args.path ?? defaultArtifactPath(config.outputDir, 'shot', '.png')
+        const options = target ? `{ path: ${j(target)} }` : ''
         const shot = args.selector
           ? `await page.locator(${j(args.selector)}).screenshot(${options})`
           : `await page.screenshot(${options})`

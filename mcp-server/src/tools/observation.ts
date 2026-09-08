@@ -8,6 +8,14 @@ import { prepareSpace, runTool } from './shared.ts'
 export const snapshotSchema = z.object({
   space: z.string().min(1).max(256).optional(),
   scope: z.enum(['full_page', 'only_within_viewport']).optional().default('full_page'),
+  maxChars: z
+    .number()
+    .int()
+    .min(1_000)
+    .max(200_000)
+    .optional()
+    .default(20_000)
+    .describe('Truncate the returned tree at this many characters (default 20000) to keep long chat sessions affordable.'),
 })
 
 export const pageInfoSchema = z.object({
@@ -36,10 +44,11 @@ export function registerObservationTools(
           `let s = ${call}\n` +
           `let tries = 0\n` +
           `while (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\n` +
-          `const text = s.content ?? ''\n` +
-          `console.log('${SENTINEL}' + JSON.stringify(text === '' ? ` +
+          `const full = s.content ?? ''\n` +
+          `const text = full.slice(0, ${args.maxChars})\n` +
+          `console.log('${SENTINEL}' + JSON.stringify(full === '' ? ` +
           `{ ok: false, text, tries, reason: 'snapshot returned no content after retries' } : ` +
-          `{ ok: true, text, tries }))\n`
+          `{ ok: true, text, tries, totalChars: full.length, truncated: full.length > ${args.maxChars} }))\n`
         return runTool(runner, script, { active: space, commitSpace, timeoutMs: 30_000 })
       },
     )
