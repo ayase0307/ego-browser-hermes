@@ -65,8 +65,13 @@ Common patterns:
   Passing the selector focuses the field first, so Enter does not land on the page body.
 - **Reach lazy-loaded content**: `scroll { dy: 900 }`, then `snapshot` again. Check `movedY` in
   the result — a zero means the page did not actually scroll, so scrolling again will not help.
-- **Native alert/confirm/prompt**: when `page_info` returns a `dialog` field, page JavaScript is
-  blocked until you call `dialog { accept: true | false }`. Nothing else will work until then.
+- **Native alert/confirm/prompt**: a dialog blocks page JavaScript for the whole task space, and
+  **only the call that opened it can answer it** — every tool call runs in its own runtime process,
+  and a process that attaches afterwards blocks too. So when a click or key press might open one,
+  pass `onDialog: "accept" | "dismiss"` on that call; the result reports the dialog's message
+  either way. If you are already stuck (snapshot/page_info come back saying page JavaScript is
+  blocked), you cannot clear it from here: ask the user to click the dialog in the browser window,
+  or `space_close` the space and redo the action with `onDialog` set.
 - **Scratch tabs**: `navigate` reuses tabs by URL, so they accumulate. `tabs { action: "close" }`
   as you go, especially before finishing with `keep: true`.
 
@@ -113,6 +118,8 @@ Only one side holds control of a task space at a time.
   active before the failure.
 - An empty snapshot after retries is an error, not a silent success. A download that produced no
   file is an error too — check the path.
+- `snapshot` and `page_info` fail fast (a few seconds) when page JavaScript is blocked rather than
+  stalling until the tool timeout. Read the error: it names the recovery.
 - Screenshot, upload and download paths must be absolute. Uploads must exist before the call.
 - Verify a returned file exists before claiming delivery.
 - `download` accepts a selector trigger, never arbitrary page JavaScript.
@@ -121,8 +128,8 @@ Only one side holds control of a task space at a time.
 
 `js`, `cdp`, `cli` and `http` are absent by default. They appear only when the server starts with
 `EGO_BROWSER_ENABLE_ADVANCED=true`; `EGO_BROWSER_TOOLS` can narrow the surface further. The safe
-set now covers keyboard, scrolling and dialogs, so "I need to press a key" is not a reason to
-enable them.
+set now covers keyboard input, scrolling and dialog answers, so "I need to press a key" is not a
+reason to enable them.
 
 ## Cleanup
 

@@ -41,7 +41,6 @@ export const DEFAULT_SAFE_TOOLS = [
   'ego_browser_wait',
   'ego_browser_press',
   'ego_browser_scroll',
-  'ego_browser_dialog',
   'ego_browser_screenshot',
   'ego_browser_download',
   'ego_browser_upload',

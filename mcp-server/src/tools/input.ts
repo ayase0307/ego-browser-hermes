@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
-import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
+import { dialogReadback, ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
 import type { EgoRunner } from '../types.ts'
 import { errorResult, prepareSpace, runTool } from './shared.ts'
 
@@ -23,18 +23,18 @@ export const pressSchema = z
       .optional()
       .describe('Optional CSS/xpath/ref/loc selector to focus before typing or pressing.'),
     space: spaceArg,
+  onDialog: z
+    .enum(['accept', 'dismiss'])
+    .optional()
+    .describe(
+      'What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.',
+    ),
   })
   .refine((v) => Boolean(v.key) || Boolean(v.text), { message: 'Provide key, text, or both.' })
 
 export const scrollSchema = z.object({
   dy: z.number().int().min(-100_000).max(100_000).optional().default(600).describe('Vertical scroll in CSS pixels (positive scrolls down).'),
   dx: z.number().int().min(-100_000).max(100_000).optional().default(0).describe('Horizontal scroll in CSS pixels.'),
-  space: spaceArg,
-})
-
-export const dialogSchema = z.object({
-  accept: z.boolean().describe('true accepts (OK) the open native dialog, false dismisses it (Cancel).'),
-  promptText: z.string().max(4096).optional().describe('Text to submit when the dialog is a prompt().'),
   space: spaceArg,
 })
 
@@ -60,10 +60,10 @@ export function registerInputTools(
         const press = args.key ? `await page.keyboard.press(${j(args.key)})\n` : ''
         const script =
           `${useSpace(space)}${ensureRealTab()}${focus}${type}${press}` +
-          `const pginfo = await page.info()\n` +
+          dialogReadback(args.onDialog) +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, typed: ${j(args.text ?? null)}, pressed: ${j(
             args.key ?? null,
-          )}, page: pginfo }))\n`
+          )}, dialog: __dialog, page: pginfo }))\n`
         return runTool(runner, script, { active: space, commitSpace, timeoutMs: 45_000 })
       },
     )
@@ -92,27 +92,4 @@ export function registerInputTools(
     )
   }
 
-  if (isAllowed('ego_browser_dialog')) {
-    server.registerTool(
-      'ego_browser_dialog',
-      {
-        description:
-          'Accept or dismiss an open native alert/confirm/prompt dialog. Call this when page_info reports a `dialog` field — page JavaScript stays blocked until the dialog is handled.',
-        inputSchema: dialogSchema,
-      },
-      async (args) => {
-        const { space, commitSpace } = prepareSpace(tracker, args.space)
-        const params =
-          args.promptText === undefined
-            ? `{ accept: ${args.accept} }`
-            : `{ accept: ${args.accept}, promptText: ${j(args.promptText)} }`
-        const script =
-          `${useSpace(space)}` +
-          `await cdp('Page.handleJavaScriptDialog', ${params})\n` +
-          `const pginfo = await page.info()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, accepted: ${args.accept}, page: pginfo }))\n`
-        return runTool(runner, script, { active: space, commitSpace, timeoutMs: 30_000 })
-      },
-    )
-  }
 }

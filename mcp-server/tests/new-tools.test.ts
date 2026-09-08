@@ -67,14 +67,46 @@ describe('scroll: lazy-loaded content is reachable', () => {
   })
 })
 
-describe('dialog: a native alert/confirm does not deadlock the safe tool set', () => {
-  it('handles the dialog without exposing raw CDP to the caller', async () => {
+describe('dialog: only the call that opens one can answer it', () => {
+  it('answers the dialog in the same script when onDialog is given', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_dialog', { accept: true, promptText: 'yes' })
-    expect(last(scripts)).toContain('Page.handleJavaScriptDialog')
-    expect(last(scripts)).toContain('accept: true')
-    expect(toolsOf(server).ego_browser_cdp).toBeUndefined()
+    await call(server, 'ego_browser_click', { selector: 'css:#ask', double: false, timeout: 20_000, onDialog: 'accept' })
+    const script = last(scripts)
+    // settle first: handlers routinely open the dialog a tick after the click returns
+    expect(script).toContain('page.waitForTimeout(600)')
+    expect(script).toContain('Page.handleJavaScriptDialog')
+    expect(script).toContain('accept: true')
+    expect(script.indexOf('waitForTimeout(600)')).toBeLessThan(script.indexOf('handleJavaScriptDialog'))
+  })
+
+  it('dismisses instead of accepting when asked', async () => {
+    const { runner, scripts } = scriptedRunner()
+    const server = createMcpServer({}, runner)
+    await call(server, 'ego_browser_press', { key: 'Enter', onDialog: 'dismiss' })
+    expect(last(scripts)).toContain('accept: false')
+  })
+
+  it('only reports the dialog when onDialog is omitted, and never stalls a caller that did not ask', async () => {
+    const { runner, scripts } = scriptedRunner()
+    const server = createMcpServer({}, runner)
+    await call(server, 'ego_browser_click', { selector: 'css:#ask', double: false, timeout: 20_000 })
+    const script = last(scripts)
+    expect(script).toContain('dialog: __dialog')
+    expect(script).not.toContain('handleJavaScriptDialog')
+    expect(script).not.toContain('waitForTimeout(600)')
+    // the standalone dialog tool cannot work across processes and must not be advertised
+    expect(toolsOf(server).ego_browser_dialog).toBeUndefined()
+  })
+
+  it('tells an observer how to recover instead of stalling on blocked page JavaScript', async () => {
+    const { runner, scripts } = scriptedRunner()
+    const server = createMcpServer({}, runner)
+    await call(server, 'ego_browser_page_info', {})
+    const script = last(scripts)
+    expect(script).toContain('Promise.race')
+    expect(script).toContain('onDialog')
+    expect(script).toContain('ego_browser_space_close')
   })
 })
 
@@ -179,6 +211,6 @@ describe('tool surface', () => {
     for (const name of ['ego_browser_js', 'ego_browser_cdp', 'ego_browser_cli', 'ego_browser_http']) {
       expect(tools[name]).toBeUndefined()
     }
-    expect(DEFAULT_SAFE_TOOLS).toHaveLength(18)
+    expect(DEFAULT_SAFE_TOOLS).toHaveLength(17)
   })
 })

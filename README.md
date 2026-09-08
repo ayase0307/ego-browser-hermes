@@ -11,23 +11,23 @@ Verified on Windows with Node.js 22 and Hermes Agent:
 - TypeScript typecheck passes
 - 74 unit/integration tests pass
 - MCP stdio `initialize` and `tools/list` smoke test passes
-- Hermes discovers all 18 safe tools
+- Hermes discovers all 17 safe tools
 - Real Chromium smoke opens `https://example.com`, reads page info and semantic content, captures a screenshot, and closes its task space
 
 The original DSH sidebar/live-view UI has not been ported. This release focuses on the Hermes MCP tool surface and the vendored ego-lite runtime.
 
 ## Default tools
 
-18 safe tools. The keyboard, scroll, dialog and control tools exist so that ordinary
-interactive work — submitting a search box, reaching lazy-loaded content, clearing a native
-dialog, letting a human log in — never requires enabling the advanced surface.
+17 safe tools. The keyboard, scroll and control tools exist so that ordinary interactive work —
+submitting a search box, reaching lazy-loaded content, letting a human log in — never requires
+enabling the advanced surface. `click` and `press` take `onDialog` to answer a native
+alert/confirm/prompt they trigger.
 
 - `ego_browser_status`
 - `ego_browser_space_open` / `ego_browser_space_close` / `ego_browser_space_list`
 - `ego_browser_navigate` / `ego_browser_tabs`
 - `ego_browser_snapshot` / `ego_browser_page_info`
 - `ego_browser_click` / `ego_browser_fill` / `ego_browser_press` / `ego_browser_scroll` / `ego_browser_wait`
-- `ego_browser_dialog`
 - `ego_browser_control` (hand control to the user / take it back)
 - `ego_browser_screenshot`
 - `ego_browser_upload` / `ego_browser_download`
@@ -89,6 +89,8 @@ serves; the bundled skill therefore requires an explicit `space` on every call.
 - The runtime cursor identifies itself as Hermes while respecting an explicit user override.
 - Control handoff is explicit in both directions: `control` never takes the browser back on its own.
 - A download that completes without producing a file is reported as an error, not as a success.
+- A native dialog can only be answered by the call that opened it (`onDialog` on `click`/`press`);
+  observation tools fail fast with that explanation instead of stalling until timeout.
 
 ## Upstream and attribution
 

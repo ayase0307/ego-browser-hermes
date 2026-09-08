@@ -20,10 +20,16 @@ export const SAFE_FN =
 export const useSpace = (name: string | number): string =>
   `const task = await taskSpaces.useOrCreate(${j(name)})\n`
 
+/**
+ * Switch to a real page tab, but only when we are not already on one: calling switchTab while a
+ * native dialog is open wedges every later page-JavaScript call in that runtime process (verified
+ * against real Chromium — page.info() then never resolves), which would make an open dialog
+ * impossible to even observe, let alone clear.
+ */
 export const ensureRealTab = (): string =>
   `const __tabs = await browser.listTabs()\n` +
   `const __real = __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\n` +
-  `if (__real) await browser.switchTab(__real.targetId)\n`
+  `if (__real && !__real.active) await browser.switchTab(__real.targetId)\n`
 
 /**
  * Scan stdout from bottom to top, find the line with SENTINEL, and parse its JSON payload.
@@ -41,4 +47,31 @@ export function parseSentinel(stdout: string): Record<string, unknown> | undefin
     }
   }
   return undefined
+}
+
+/**
+ * A native dialog blocks page JavaScript, and a *later* MCP call cannot clear it: a freshly
+ * attached runtime process blocks even on Page.handleJavaScriptDialog (verified against real
+ * Chromium). The only process that can deal with a dialog is the one whose action opened it,
+ * so actions that can trigger one report it, and optionally answer it, in the same script.
+ */
+export const dialogReadback = (onDialog?: 'accept' | 'dismiss'): string => {
+  const handle =
+    onDialog === undefined
+      ? ''
+      : `  await cdp('Page.handleJavaScriptDialog', { accept: ${onDialog === 'accept'} })\n` +
+        `  __dialog = { ...__dialog, answered: ${j(onDialog)} }\n` +
+        `  pginfo = await page.info()\n`
+  // A handler often opens its dialog a tick or a network round trip after the action returns,
+  // so when the caller asked us to answer one, give it a moment to appear. Costs nothing on
+  // calls that did not opt in.
+  const settle = onDialog === undefined ? '' : `await page.waitForTimeout(600)\n`
+  return (
+    settle +
+    `let pginfo = await page.info()\n` +
+    `let __dialog = pginfo && pginfo.dialog ? pginfo.dialog : null\n` +
+    `if (__dialog) {\n` +
+    handle +
+    `}\n`
+  )
 }

@@ -227,7 +227,13 @@ const num = (v, fallback) => typeof v === "number" && Number.isFinite(v) ? v : f
 const bool = (v, fallback) => typeof v === "boolean" ? v : fallback;
 const SAFE_FN = "function safe(v){try{return JSON.parse(JSON.stringify(v))}catch{return String(v)}}\n";
 const useSpace = (name) => `const task = await taskSpaces.useOrCreate(${j(name)})\n`;
-const ensureRealTab = () => "const __tabs = await browser.listTabs()\nconst __real = __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\nif (__real) await browser.switchTab(__real.targetId)\n";
+/**
+* Switch to a real page tab, but only when we are not already on one: calling switchTab while a
+* native dialog is open wedges every later page-JavaScript call in that runtime process (verified
+* against real Chromium — page.info() then never resolves), which would make an open dialog
+* impossible to even observe, let alone clear.
+*/
+const ensureRealTab = () => "const __tabs = await browser.listTabs()\nconst __real = __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\nif (__real && !__real.active) await browser.switchTab(__real.targetId)\n";
 /**
 * Scan stdout from bottom to top, find the line with SENTINEL, and parse its JSON payload.
 */
@@ -244,6 +250,16 @@ function parseSentinel(stdout) {
 		}
 	}
 }
+/**
+* A native dialog blocks page JavaScript, and a *later* MCP call cannot clear it: a freshly
+* attached runtime process blocks even on Page.handleJavaScriptDialog (verified against real
+* Chromium). The only process that can deal with a dialog is the one whose action opened it,
+* so actions that can trigger one report it, and optionally answer it, in the same script.
+*/
+const dialogReadback = (onDialog) => {
+	const handle = onDialog === void 0 ? "" : `  await cdp('Page.handleJavaScriptDialog', { accept: ${onDialog === "accept"} })\n  __dialog = { ...__dialog, answered: ${j(onDialog)} }\n  pginfo = await page.info()\n`;
+	return (onDialog === void 0 ? "" : `await page.waitForTimeout(600)\n`) + "let pginfo = await page.info()\nlet __dialog = pginfo && pginfo.dialog ? pginfo.dialog : null\nif (__dialog) {\n" + handle + `}\n`;
+};
 
 //#endregion
 //#region mcp-server/src/runtime/runner.ts
@@ -683,6 +699,13 @@ const snapshotSchema = z.object({
 	maxChars: z.number().int().min(1e3).max(2e5).optional().default(2e4).describe("Truncate the returned tree at this many characters (default 20000) to keep long chat sessions affordable.")
 });
 const pageInfoSchema = z.object({ space: z.string().min(1).max(256).optional() });
+/**
+* Page JavaScript is unavailable while a native dialog is open — in a freshly spawned runtime
+* process the call simply never resolves. Racing it turns a full-timeout stall into a fast,
+* actionable error naming the tool that can clear the dialog.
+*/
+const DIALOG_HINT = "page JavaScript is blocked, which almost always means a native alert/confirm/prompt is open. A dialog can only be answered by the call that opened it (pass onDialog to click/press), or by a human clicking it in the browser window. Otherwise close this space with ego_browser_space_close and redo the action with onDialog set.";
+const raceBlocked = (expr, ms = 5e3) => `const __raced = await Promise.race([(async () => ({ v: ${expr} }))(), new Promise(r => setTimeout(() => r({ blocked: true }), ${ms}))])\n`;
 function registerObservationTools(server, runner, tracker, isAllowed) {
 	if (isAllowed("ego_browser_snapshot")) server.registerTool("ego_browser_snapshot", {
 		description: "Read the current page semantic tree as text annotated with refs and stable locators. Retries briefly when a just-navigated page returns an empty capture.",
@@ -690,7 +713,7 @@ function registerObservationTools(server, runner, tracker, isAllowed) {
 	}, async (args) => {
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		const call = `await page.snapshotRaw({ scope: ${j(args.scope)} })`;
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}let s = ${call}\nlet tries = 0\nwhile (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\nconst full = s.content ?? ''\nconst text = full.slice(0, ${args.maxChars})\nconsole.log('${SENTINEL}' + JSON.stringify(full === '' ? { ok: false, text, tries, reason: 'snapshot returned no content after retries' } : { ok: true, text, tries, totalChars: full.length, truncated: full.length > ${args.maxChars} }))\n`, {
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}` + raceBlocked(call) + `if (__raced.blocked) { console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(DIALOG_HINT)} })); } else {\nlet s = __raced.v\nlet tries = 0\nwhile (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\nconst full = s.content ?? ''\nconst text = full.slice(0, ${args.maxChars})\nconsole.log('${SENTINEL}' + JSON.stringify(full === '' ? { ok: false, text, tries, reason: 'snapshot returned no content after retries' } : { ok: true, text, tries, totalChars: full.length, truncated: full.length > ${args.maxChars} }))\n}\n`, {
 			active: space$1,
 			commitSpace,
 			timeoutMs: 3e4
@@ -701,7 +724,7 @@ function registerObservationTools(server, runner, tracker, isAllowed) {
 		inputSchema: pageInfoSchema
 	}, async (args) => {
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`, {
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}` + raceBlocked("await page.info()") + `console.log('${SENTINEL}' + JSON.stringify(__raced.blocked ? { ok: false, error: ${j(DIALOG_HINT)} } : { ok: true, page: __raced.v }))\n`, {
 			active: space$1,
 			commitSpace
 		});
@@ -717,7 +740,8 @@ const clickSchema = z.object({
 	label: z.string().min(1).max(120).optional(),
 	double: z.boolean().optional().default(false),
 	space: z.string().min(1).max(256).optional(),
-	timeout: z.number().int().min(500).max(12e4).optional().default(2e4)
+	timeout: z.number().int().min(500).max(12e4).optional().default(2e4),
+	onDialog: z.enum(["accept", "dismiss"]).optional().describe("What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.")
 }).refine((v) => Boolean(v.selector) || v.x !== void 0 && v.y !== void 0, { message: "Provide selector or both x and y coordinates." });
 const fillSchema = z.object({
 	selector: z.string().min(1).max(4096),
@@ -736,7 +760,7 @@ const screenshotSchema = z.object({
 });
 function registerInteractionTools(server, runner, tracker, isAllowed, config = {}) {
 	if (isAllowed("ego_browser_click")) server.registerTool("ego_browser_click", {
-		description: "Click a selector/ref/locator or viewport coordinates in the current task space.",
+		description: "Click a selector/ref/locator or viewport coordinates. If the click opens a native dialog it is reported in `dialog`; pass onDialog to answer it in the same call, because no later call can.",
 		inputSchema: clickSchema
 	}, async (args) => {
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
@@ -745,7 +769,7 @@ function registerInteractionTools(server, runner, tracker, isAllowed, config = {
 			const options = args.label ? `{ label: ${j(args.label)} }` : "";
 			action = args.double ? `await page.locator(${j(args.selector)}).dblclick(${options})` : `await page.locator(${j(args.selector)}).click(${options})`;
 		} else action = args.double ? `await page.mouse.dblclick(${args.x}, ${args.y})` : `await page.mouse.click(${args.x}, ${args.y})`;
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${action}\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, page: pginfo }))\n`, {
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${action}\n` + dialogReadback(args.onDialog) + `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, dialog: __dialog, page: pginfo }))\n`, {
 			active: space$1,
 			commitSpace,
 			timeoutMs: args.timeout + 15e3
@@ -841,16 +865,12 @@ const pressSchema = z.object({
 	key: z.string().min(1).max(200).optional().describe("Key or combo to press, e.g. \"Enter\", \"Tab\", \"Escape\", \"Control+a\"."),
 	text: z.string().max(1e5).optional().describe("Text to type with real key events (for editors that ignore fill)."),
 	selector: z.string().min(1).max(4096).optional().describe("Optional CSS/xpath/ref/loc selector to focus before typing or pressing."),
-	space: spaceArg$1
+	space: spaceArg$1,
+	onDialog: z.enum(["accept", "dismiss"]).optional().describe("What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.")
 }).refine((v) => Boolean(v.key) || Boolean(v.text), { message: "Provide key, text, or both." });
 const scrollSchema = z.object({
 	dy: z.number().int().min(-1e5).max(1e5).optional().default(600).describe("Vertical scroll in CSS pixels (positive scrolls down)."),
 	dx: z.number().int().min(-1e5).max(1e5).optional().default(0).describe("Horizontal scroll in CSS pixels."),
-	space: spaceArg$1
-});
-const dialogSchema = z.object({
-	accept: z.boolean().describe("true accepts (OK) the open native dialog, false dismisses it (Cancel)."),
-	promptText: z.string().max(4096).optional().describe("Text to submit when the dialog is a prompt()."),
 	space: spaceArg$1
 });
 function registerInputTools(server, runner, tracker, isAllowed) {
@@ -863,7 +883,7 @@ function registerInputTools(server, runner, tracker, isAllowed) {
 		const focus = args.selector ? `await page.locator(${j(args.selector)}).focus()\n` : "";
 		const type = args.text ? `await page.keyboard.type(${j(args.text)})\n` : "";
 		const press = args.key ? `await page.keyboard.press(${j(args.key)})\n` : "";
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${focus}${type}${press}const pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, typed: ${j(args.text ?? null)}, pressed: ${j(args.key ?? null)}, page: pginfo }))\n`, {
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${focus}${type}${press}` + dialogReadback(args.onDialog) + `console.log('${SENTINEL}' + JSON.stringify({ ok: true, typed: ${j(args.text ?? null)}, pressed: ${j(args.key ?? null)}, dialog: __dialog, page: pginfo }))\n`, {
 			active: space$1,
 			commitSpace,
 			timeoutMs: 45e3
@@ -878,18 +898,6 @@ function registerInputTools(server, runner, tracker, isAllowed) {
 			active: space$1,
 			commitSpace,
 			timeoutMs: 45e3
-		});
-	});
-	if (isAllowed("ego_browser_dialog")) server.registerTool("ego_browser_dialog", {
-		description: "Accept or dismiss an open native alert/confirm/prompt dialog. Call this when page_info reports a `dialog` field — page JavaScript stays blocked until the dialog is handled.",
-		inputSchema: dialogSchema
-	}, async (args) => {
-		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
-		const params = args.promptText === void 0 ? `{ accept: ${args.accept} }` : `{ accept: ${args.accept}, promptText: ${j(args.promptText)} }`;
-		return runTool(runner, `${useSpace(space$1)}await cdp('Page.handleJavaScriptDialog', ${params})\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, accepted: ${args.accept}, page: pginfo }))\n`, {
-			active: space$1,
-			commitSpace,
-			timeoutMs: 3e4
 		});
 	});
 }
@@ -1049,7 +1057,6 @@ const DEFAULT_SAFE_TOOLS = [
 	"ego_browser_wait",
 	"ego_browser_press",
 	"ego_browser_scroll",
-	"ego_browser_dialog",
 	"ego_browser_screenshot",
 	"ego_browser_download",
 	"ego_browser_upload",

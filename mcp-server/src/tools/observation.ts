@@ -22,6 +22,22 @@ export const pageInfoSchema = z.object({
   space: z.string().min(1).max(256).optional(),
 })
 
+
+/**
+ * Page JavaScript is unavailable while a native dialog is open — in a freshly spawned runtime
+ * process the call simply never resolves. Racing it turns a full-timeout stall into a fast,
+ * actionable error naming the tool that can clear the dialog.
+ */
+const DIALOG_HINT =
+  'page JavaScript is blocked, which almost always means a native alert/confirm/prompt is open. ' +
+  'A dialog can only be answered by the call that opened it (pass onDialog to click/press), or by ' +
+  'a human clicking it in the browser window. Otherwise close this space with ego_browser_space_close ' +
+  'and redo the action with onDialog set.'
+
+const raceBlocked = (expr: string, ms = 5_000): string =>
+  `const __raced = await Promise.race([(async () => ({ v: ${expr} }))(), ` +
+  `new Promise(r => setTimeout(() => r({ blocked: true }), ${ms}))])\n`
+
 export function registerObservationTools(
   server: McpServer,
   runner: EgoRunner,
@@ -41,14 +57,19 @@ export function registerObservationTools(
         const call = `await page.snapshotRaw({ scope: ${j(args.scope)} })`
         const script =
           `${useSpace(space)}${ensureRealTab()}` +
-          `let s = ${call}\n` +
+          raceBlocked(call) +
+          `if (__raced.blocked) { console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(
+            DIALOG_HINT,
+          )} })); } else {\n` +
+          `let s = __raced.v\n` +
           `let tries = 0\n` +
           `while (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\n` +
           `const full = s.content ?? ''\n` +
           `const text = full.slice(0, ${args.maxChars})\n` +
           `console.log('${SENTINEL}' + JSON.stringify(full === '' ? ` +
           `{ ok: false, text, tries, reason: 'snapshot returned no content after retries' } : ` +
-          `{ ok: true, text, tries, totalChars: full.length, truncated: full.length > ${args.maxChars} }))\n`
+          `{ ok: true, text, tries, totalChars: full.length, truncated: full.length > ${args.maxChars} }))\n` +
+          `}\n`
         return runTool(runner, script, { active: space, commitSpace, timeoutMs: 30_000 })
       },
     )
@@ -65,8 +86,9 @@ export function registerObservationTools(
         const { space, commitSpace } = prepareSpace(tracker, args.space)
         const script =
           `${useSpace(space)}${ensureRealTab()}` +
-          `const pginfo = await page.info()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`
+          raceBlocked('await page.info()') +
+          `console.log('${SENTINEL}' + JSON.stringify(__raced.blocked ? ` +
+          `{ ok: false, error: ${j(DIALOG_HINT)} } : { ok: true, page: __raced.v }))\n`
         return runTool(runner, script, { active: space, commitSpace })
       },
     )

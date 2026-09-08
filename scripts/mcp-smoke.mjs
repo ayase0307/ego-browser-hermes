@@ -70,7 +70,6 @@ child.stdout.on('data', (chunk) => {
       const expected = [
         'ego_browser_click',
         'ego_browser_control',
-        'ego_browser_dialog',
         'ego_browser_download',
         'ego_browser_fill',
         'ego_browser_navigate',
