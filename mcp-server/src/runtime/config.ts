@@ -243,6 +243,10 @@ export function resolveEgoEnv(
     env.EGO_LINUX_DATA_DIR = config.dataDir
   }
 
+  if (!env.EGO_LINUX_CURSOR_NAME) {
+    env.EGO_LINUX_CURSOR_NAME = 'Hermes'
+  }
+
   return env
 }
 

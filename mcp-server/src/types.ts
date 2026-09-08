@@ -32,20 +32,12 @@ export interface EgoRunner {
   getStatus(): Promise<EgoStatusResult>
 }
 
-export interface ToolTextContent {
-  type: 'text'
-  text: string
-}
+import type { CallToolResult, ContentBlock, ImageContent, TextContent } from '@modelcontextprotocol/sdk/types.js'
 
-export interface ToolImageContent {
-  type: 'image'
-  data: string
-  mimeType: string
-}
+export type ToolTextContent = TextContent
 
-export type ToolContent = ToolTextContent | ToolImageContent
+export type ToolImageContent = ImageContent
 
-export interface McpToolResponse {
-  content: ToolContent[]
-  isError?: boolean
-}
+export type ToolContent = ContentBlock
+
+export type McpToolResponse = CallToolResult

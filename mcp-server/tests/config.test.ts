@@ -69,6 +69,12 @@ describe('Runtime Config and Args', () => {
       expect(env.EGO_LINUX_CHROME).toBe('C:\\test\\chrome.exe')
       expect(env.EGO_LINUX_EXTRA_ARGS).toBe('--disable-features=Translate')
       expect(env.EGO_LINUX_DATA_DIR).toBe('D:\\custom\\data')
+      expect(env.EGO_LINUX_CURSOR_NAME).toBe('Hermes')
+    })
+
+    it('preserves an explicit cursor name override', () => {
+      const env = resolveEgoEnv({}, { platform: 'win32', baseEnv: { EGO_LINUX_CURSOR_NAME: 'Custom Agent' } })
+      expect(env.EGO_LINUX_CURSOR_NAME).toBe('Custom Agent')
     })
 
     it('sets headless on Linux if DISPLAY is missing', () => {

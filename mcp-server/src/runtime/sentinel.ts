@@ -1,7 +1,7 @@
 /**
  * Sentinel marker and script formatting helpers.
  */
-export const SENTINEL = '@@DSH_RESULT@@'
+export const SENTINEL = '@@HERMES_EGO_RESULT@@'
 
 export const j = (v: unknown): string => JSON.stringify(v)
 
