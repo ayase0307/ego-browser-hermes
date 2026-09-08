@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
 import type { EgoRunner } from '../types.ts'
-import { activeSpace, errorResult, runTool } from './shared.ts'
+import { errorResult, prepareSpace, runTool } from './shared.ts'
 
 export const clickSchema = z
   .object({
@@ -52,7 +52,7 @@ export function registerInteractionTools(
         inputSchema: clickSchema,
       },
       async (args) => {
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         let action: string
         if (args.selector) {
           const options = args.label ? `{ label: ${j(args.label)} }` : ''
@@ -68,7 +68,7 @@ export function registerInteractionTools(
           `${useSpace(space)}${ensureRealTab()}${action}\n` +
           `const pginfo = await page.info()\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, page: pginfo }))\n`
-        return runTool(runner, script, space, args.timeout + 15_000)
+        return runTool(runner, script, { active: space, commitSpace, timeoutMs: args.timeout + 15_000 })
       },
     )
   }
@@ -81,13 +81,13 @@ export function registerInteractionTools(
         inputSchema: fillSchema,
       },
       async (args) => {
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         const script =
           `${useSpace(space)}${ensureRealTab()}` +
           `await page.locator(${j(args.selector)}).fill(${j(args.text)})\n` +
           `const pginfo = await page.info()\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`
-        return runTool(runner, script, space, args.timeout + 15_000)
+        return runTool(runner, script, { active: space, commitSpace, timeoutMs: args.timeout + 15_000 })
       },
     )
   }
@@ -100,11 +100,11 @@ export function registerInteractionTools(
         inputSchema: waitSchema,
       },
       async (args) => {
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         const script =
           `${useSpace(space)}await page.waitForTimeout(${args.ms})\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, waitedMs: ${args.ms} }))\n`
-        return runTool(runner, script, space, args.ms + 15_000)
+        return runTool(runner, script, { active: space, commitSpace, timeoutMs: args.ms + 15_000 })
       },
     )
   }
@@ -118,7 +118,7 @@ export function registerInteractionTools(
       },
       async (args) => {
         if (args.path && !isAbsolute(args.path)) return errorResult('Screenshot path must be absolute.')
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         const options = args.path ? `{ path: ${j(args.path)} }` : ''
         const shot = args.selector
           ? `await page.locator(${j(args.selector)}).screenshot(${options})`
@@ -126,7 +126,7 @@ export function registerInteractionTools(
         const script =
           `${useSpace(space)}${ensureRealTab()}const path = ${shot}\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`
-        return runTool(runner, script, space, 45_000)
+        return runTool(runner, script, { active: space, commitSpace, timeoutMs: 45_000 })
       },
     )
   }

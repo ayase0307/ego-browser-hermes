@@ -5,7 +5,7 @@ import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
 import type { EgoRunner } from '../types.ts'
-import { activeSpace, errorResult, runTool } from './shared.ts'
+import { errorResult, prepareSpace, runTool } from './shared.ts'
 
 export const uploadSchema = z.object({
   selector: z.string().min(1).max(4096),
@@ -33,12 +33,12 @@ export function registerArtifactTools(
       async (args) => {
         if (!isAbsolute(args.path)) return errorResult('Upload path must be absolute.')
         if (!existsSync(args.path)) return errorResult(`Upload file does not exist: ${args.path}`)
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         const script =
           `${useSpace(space)}${ensureRealTab()}` +
           `await page.locator(${j(args.selector)}).setInputFiles(${j(args.path)})\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, upload: ${j(args.selector)}, path: ${j(args.path)} }))\n`
-        return runTool(runner, script, space, 45_000)
+        return runTool(runner, script, { active: space, commitSpace, timeoutMs: 45_000 })
       },
     )
   }
@@ -52,7 +52,7 @@ export function registerArtifactTools(
       },
       async (args) => {
         if (args.savePath && !isAbsolute(args.savePath)) return errorResult('Download savePath must be absolute.')
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         const trigger = args.triggerSelector
           ? `await page.locator(${j(args.triggerSelector)}).click()\n`
           : '/* waiting for a download initiated by an earlier action */\n'
@@ -68,7 +68,7 @@ export function registerArtifactTools(
           "const __url = typeof __dl.url === 'function' ? __dl.url() : null\n" +
           save +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path: __final, suggestedFilename: __name, url: __url }))\n`
-        return runTool(runner, script, space, args.timeout + 15_000)
+        return runTool(runner, script, { active: space, commitSpace, timeoutMs: args.timeout + 15_000 })
       },
     )
   }

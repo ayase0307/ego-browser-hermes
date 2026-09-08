@@ -2,6 +2,7 @@ node_modules/
 *.tgz
 *.tsbuildinfo
 pnpm-lock.yaml
+package-lock.json
 .memory/
 .playwright-mcp/
 PLAN-low-latency-watch-panel.md

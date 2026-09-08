@@ -62,6 +62,8 @@ The bundled skill lives at [`skills/ego-browser-hermes/SKILL.md`](skills/ego-bro
 - Local stdio MCP transport; Hermes remains the agent host.
 - Browser calls are serialized per server process.
 - Commands use `spawn()` with argv arrays, not shell interpolation.
+- `navigate` only accepts `http`/`https` URLs; `file:`, `javascript:`, `data:`, and `chrome://` are rejected before launch.
+- A failed call (navigate, snapshot, click, fill, wait, screenshot, upload, download, or an advanced tool) does not change the active task space.
 - Upload files must exist and use absolute paths.
 - Screenshot/download destinations must be absolute.
 - Safe downloads do not execute arbitrary trigger JavaScript.

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
 import type { EgoRunner } from '../types.ts'
-import { activeSpace, runTool } from './shared.ts'
+import { prepareSpace, runTool } from './shared.ts'
 
 export const snapshotSchema = z.object({
   space: z.string().min(1).max(256).optional(),
@@ -29,7 +29,7 @@ export function registerObservationTools(
         inputSchema: snapshotSchema,
       },
       async (args) => {
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         const call = `await page.snapshotRaw({ scope: ${j(args.scope)} })`
         const script =
           `${useSpace(space)}${ensureRealTab()}` +
@@ -40,7 +40,7 @@ export function registerObservationTools(
           `console.log('${SENTINEL}' + JSON.stringify(text === '' ? ` +
           `{ ok: false, text, tries, reason: 'snapshot returned no content after retries' } : ` +
           `{ ok: true, text, tries }))\n`
-        return runTool(runner, script, space, 30_000)
+        return runTool(runner, script, { active: space, commitSpace, timeoutMs: 30_000 })
       },
     )
   }
@@ -53,12 +53,12 @@ export function registerObservationTools(
         inputSchema: pageInfoSchema,
       },
       async (args) => {
-        const space = activeSpace(tracker, args.space)
+        const { space, commitSpace } = prepareSpace(tracker, args.space)
         const script =
           `${useSpace(space)}${ensureRealTab()}` +
           `const pginfo = await page.info()\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`
-        return runTool(runner, script, space)
+        return runTool(runner, script, { active: space, commitSpace })
       },
     )
   }

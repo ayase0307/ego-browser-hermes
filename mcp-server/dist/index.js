@@ -177,23 +177,23 @@ function resolveEgoEnv(config = {}, { platform = process.platform, baseEnv = pro
 	return env;
 }
 function createActiveSpaceTracker(defaultSpace = "hermes-agent") {
-	let activeSpace$1 = defaultSpace;
+	let activeSpace = defaultSpace;
 	let activeName = typeof defaultSpace === "string" ? defaultSpace : null;
 	return {
-		current: () => activeSpace$1,
+		current: () => activeSpace,
 		opened: (args, result) => {
 			activeName = result?.name ?? (typeof args?.name === "string" ? args.name : String(defaultSpace));
-			activeSpace$1 = result?.id ?? activeName ?? defaultSpace;
+			activeSpace = result?.id ?? activeName ?? defaultSpace;
 		},
 		selected: (space$1) => {
 			if (space$1 !== void 0 && space$1 !== "") {
-				activeSpace$1 = space$1;
+				activeSpace = space$1;
 				activeName = typeof space$1 === "string" ? space$1 : null;
 			}
 		},
 		closed: (space$1, done) => {
-			if (done && (String(space$1) === String(activeSpace$1) || activeName !== null && String(space$1) === String(activeName))) {
-				activeSpace$1 = defaultSpace;
+			if (done && (String(space$1) === String(activeSpace) || activeName !== null && String(space$1) === String(activeName))) {
+				activeSpace = defaultSpace;
 				activeName = typeof defaultSpace === "string" ? defaultSpace : null;
 			}
 		}
@@ -567,64 +567,18 @@ function registerSpaceTools(server, runner, tracker, isAllowed) {
 }
 
 //#endregion
-//#region mcp-server/src/tools/navigation.ts
-const navigateSchema = z.object({
-	url: z.string().url().max(2048).describe("Absolute URL to open, e.g. https://example.com/path."),
-	wait: z.boolean().optional().default(true).describe("Wait for document load (default true)."),
-	timeout: z.number().int().min(500).max(12e4).optional().default(2e4).describe("Load wait timeout in ms (default 20000)."),
-	space: z.string().max(256).optional().describe("Task-space name or id; defaults to the active space.")
-});
-function registerNavigationTools(server, runner, tracker, isAllowed) {
-	if (isAllowed("ego_browser_navigate")) server.registerTool("ego_browser_navigate", {
-		description: "Open a URL in the task space, or switch to the existing tab for it. Waits for document load. Returns resulting page info.",
-		inputSchema: navigateSchema
-	}, async (args) => {
-		try {
-			const targetSpace = args.space || tracker.current();
-			if (args.space) tracker.selected(args.space);
-			const wait = bool(args.wait, true);
-			const timeout = num(args.timeout, 2e4);
-			const u = args.url;
-			const script = `${useSpace(targetSpace)}${ensureRealTab()}const __existing = __tabs.find(t => t.url.split('#')[0] === ${j(u.split("#")[0])})\nconst tab = __existing ? await browser.switchTab(__existing.targetId) : await page.goto(${j(u)}, { wait: ${wait}, timeout: ${timeout} })\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, reused: !!__existing, page: pginfo }))\n`;
-			const result = await runner.runScript(script, { timeoutMs: timeout + 15e3 });
-			if (!result.ok) return {
-				content: [{
-					type: "text",
-					text: JSON.stringify({
-						ok: false,
-						error: result.error
-					}, null, 2)
-				}],
-				isError: true
-			};
-			const value = result.value ?? { ok: true };
-			return { content: [{
-				type: "text",
-				text: JSON.stringify({
-					...value,
-					activeSpace: tracker.current()
-				}, null, 2)
-			}] };
-		} catch (err) {
-			return {
-				content: [{
-					type: "text",
-					text: JSON.stringify({
-						ok: false,
-						error: String(err)
-					}, null, 2)
-				}],
-				isError: true
-			};
-		}
-	});
-}
-
-//#endregion
 //#region mcp-server/src/tools/shared.ts
-function activeSpace(tracker, requested) {
-	if (requested) tracker.selected(requested);
-	return requested || tracker.current();
+/**
+* Resolve the target space plus a commit callback for runTool. The space is
+* returned without mutating the tracker; the commit callback promotes it to
+* active and runTool invokes it only after a successful run.
+*/
+function prepareSpace(tracker, requested) {
+	const space$1 = requested || tracker.current();
+	return {
+		space: space$1,
+		commitSpace: requested !== void 0 ? () => tracker.selected(space$1) : void 0
+	};
 }
 function textResult(value, active) {
 	const payload = active === void 0 || value === null || typeof value !== "object" || Array.isArray(value) ? value : {
@@ -649,14 +603,62 @@ function errorResult(error) {
 		isError: true
 	};
 }
-async function runTool(runner, script, active, timeoutMs) {
+async function runTool(runner, script, options = {}) {
 	try {
-		const result = await runner.runScript(script, timeoutMs === void 0 ? void 0 : { timeoutMs });
+		const result = await runner.runScript(script, options.timeoutMs === void 0 ? void 0 : { timeoutMs: options.timeoutMs });
 		if (!result.ok) return errorResult(result.error ?? "ego-browser command failed");
-		return textResult(result.value ?? { ok: true }, active);
+		const value = result.value ?? { ok: true };
+		if (value !== null && typeof value === "object" && value.ok === false) {
+			const record = value;
+			return errorResult(typeof record.error === "string" && record.error !== "" ? record.error : typeof record.reason === "string" && record.reason !== "" ? record.reason : "ego-browser command failed");
+		}
+		if (options.active !== void 0 && options.commitSpace) options.commitSpace(options.active);
+		return textResult(value, options.active);
 	} catch (error) {
 		return errorResult(error);
 	}
+}
+
+//#endregion
+//#region mcp-server/src/tools/navigation.ts
+const navigateSchema = z.object({
+	url: z.string().url().max(2048).describe("Absolute http(s) URL to open, e.g. https://example.com/path."),
+	wait: z.boolean().optional().default(true).describe("Wait for document load (default true)."),
+	timeout: z.number().int().min(500).max(12e4).optional().default(2e4).describe("Load wait timeout in ms (default 20000)."),
+	space: z.string().max(256).optional().describe("Task-space name or id; defaults to the active space.")
+});
+function isHttpUrl(value) {
+	try {
+		const u = new URL(value);
+		return u.protocol === "http:" || u.protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+function registerNavigationTools(server, runner, tracker, isAllowed) {
+	if (isAllowed("ego_browser_navigate")) server.registerTool("ego_browser_navigate", {
+		description: "Open a URL in the task space, or switch to the existing tab for it. Waits for document load. Returns resulting page info. Only http(s) URLs are accepted.",
+		inputSchema: navigateSchema
+	}, async (args) => {
+		try {
+			const u = args.url;
+			if (!isHttpUrl(u)) return errorResult(`Unsupported URL scheme. Only http and https are allowed: ${u}`);
+			const targetSpace = args.space || tracker.current();
+			const wait = bool(args.wait, true);
+			const timeout = num(args.timeout, 2e4);
+			const script = `${useSpace(targetSpace)}${ensureRealTab()}const __existing = __tabs.find(t => t.url.split('#')[0] === ${j(u.split("#")[0])})\nconst tab = __existing ? await browser.switchTab(__existing.targetId) : await page.goto(${j(u)}, { wait: ${wait}, timeout: ${timeout} })\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, reused: !!__existing, page: pginfo }))\n`;
+			const result = await runner.runScript(script, { timeoutMs: timeout + 15e3 });
+			if (!result.ok) return errorResult(result.error);
+			const value = result.value ?? { ok: true };
+			if (args.space) tracker.selected(args.space);
+			return textResult({
+				...value,
+				activeSpace: tracker.current()
+			}, void 0);
+		} catch (err) {
+			return errorResult(err);
+		}
+	});
 }
 
 //#endregion
@@ -671,16 +673,23 @@ function registerObservationTools(server, runner, tracker, isAllowed) {
 		description: "Read the current page semantic tree as text annotated with refs and stable locators. Retries briefly when a just-navigated page returns an empty capture.",
 		inputSchema: snapshotSchema
 	}, async (args) => {
-		const space$1 = activeSpace(tracker, args.space);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		const call = `await page.snapshotRaw({ scope: ${j(args.scope)} })`;
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}let s = ${call}\nlet tries = 0\nwhile (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\nconst text = s.content ?? ''\nconsole.log('${SENTINEL}' + JSON.stringify(text === '' ? { ok: false, text, tries, reason: 'snapshot returned no content after retries' } : { ok: true, text, tries }))\n`, space$1, 3e4);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}let s = ${call}\nlet tries = 0\nwhile (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\nconst text = s.content ?? ''\nconsole.log('${SENTINEL}' + JSON.stringify(text === '' ? { ok: false, text, tries, reason: 'snapshot returned no content after retries' } : { ok: true, text, tries }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 3e4
+		});
 	});
 	if (isAllowed("ego_browser_page_info")) server.registerTool("ego_browser_page_info", {
 		description: "Return current page URL, title, viewport, scroll offsets, dimensions, and dialog state.",
 		inputSchema: pageInfoSchema
 	}, async (args) => {
-		const space$1 = activeSpace(tracker, args.space);
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`, space$1);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`, {
+			active: space$1,
+			commitSpace
+		});
 	});
 }
 
@@ -715,37 +724,53 @@ function registerInteractionTools(server, runner, tracker, isAllowed) {
 		description: "Click a selector/ref/locator or viewport coordinates in the current task space.",
 		inputSchema: clickSchema
 	}, async (args) => {
-		const space$1 = activeSpace(tracker, args.space);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		let action;
 		if (args.selector) {
 			const options = args.label ? `{ label: ${j(args.label)} }` : "";
 			action = args.double ? `await page.locator(${j(args.selector)}).dblclick(${options})` : `await page.locator(${j(args.selector)}).click(${options})`;
 		} else action = args.double ? `await page.mouse.dblclick(${args.x}, ${args.y})` : `await page.mouse.click(${args.x}, ${args.y})`;
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${action}\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, page: pginfo }))\n`, space$1, args.timeout + 15e3);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${action}\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, page: pginfo }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: args.timeout + 15e3
+		});
 	});
 	if (isAllowed("ego_browser_fill")) server.registerTool("ego_browser_fill", {
 		description: "Replace the value of an input identified by CSS, xpath, loc, or snapshot ref.",
 		inputSchema: fillSchema
 	}, async (args) => {
-		const space$1 = activeSpace(tracker, args.space);
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}await page.locator(${j(args.selector)}).fill(${j(args.text)})\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`, space$1, args.timeout + 15e3);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}await page.locator(${j(args.selector)}).fill(${j(args.text)})\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: args.timeout + 15e3
+		});
 	});
 	if (isAllowed("ego_browser_wait")) server.registerTool("ego_browser_wait", {
 		description: "Pause the current task space for a bounded number of milliseconds.",
 		inputSchema: waitSchema
 	}, async (args) => {
-		const space$1 = activeSpace(tracker, args.space);
-		return runTool(runner, `${useSpace(space$1)}await page.waitForTimeout(${args.ms})\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, waitedMs: ${args.ms} }))\n`, space$1, args.ms + 15e3);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		return runTool(runner, `${useSpace(space$1)}await page.waitForTimeout(${args.ms})\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, waitedMs: ${args.ms} }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: args.ms + 15e3
+		});
 	});
 	if (isAllowed("ego_browser_screenshot")) server.registerTool("ego_browser_screenshot", {
 		description: "Capture a page or element screenshot and return the runtime-provided absolute file path.",
 		inputSchema: screenshotSchema
 	}, async (args) => {
 		if (args.path && !isAbsolute(args.path)) return errorResult("Screenshot path must be absolute.");
-		const space$1 = activeSpace(tracker, args.space);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		const options = args.path ? `{ path: ${j(args.path)} }` : "";
 		const shot = args.selector ? `await page.locator(${j(args.selector)}).screenshot(${options})` : `await page.screenshot(${options})`;
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const path = ${shot}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`, space$1, 45e3);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const path = ${shot}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 45e3
+		});
 	});
 }
 
@@ -769,18 +794,26 @@ function registerArtifactTools(server, runner, tracker, isAllowed) {
 	}, async (args) => {
 		if (!isAbsolute(args.path)) return errorResult("Upload path must be absolute.");
 		if (!existsSync(args.path)) return errorResult(`Upload file does not exist: ${args.path}`);
-		const space$1 = activeSpace(tracker, args.space);
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}await page.locator(${j(args.selector)}).setInputFiles(${j(args.path)})\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, upload: ${j(args.selector)}, path: ${j(args.path)} }))\n`, space$1, 45e3);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}await page.locator(${j(args.selector)}).setInputFiles(${j(args.path)})\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, upload: ${j(args.selector)}, path: ${j(args.path)} }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 45e3
+		});
 	});
 	if (isAllowed("ego_browser_download")) server.registerTool("ego_browser_download", {
 		description: "Wait for a browser download, optionally clicking a selector to trigger it, and return the saved path and metadata. Arbitrary trigger scripts are intentionally not allowed in the safe tool.",
 		inputSchema: downloadSchema
 	}, async (args) => {
 		if (args.savePath && !isAbsolute(args.savePath)) return errorResult("Download savePath must be absolute.");
-		const space$1 = activeSpace(tracker, args.space);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		const trigger = args.triggerSelector ? `await page.locator(${j(args.triggerSelector)}).click()\n` : "/* waiting for a download initiated by an earlier action */\n";
 		const save = args.savePath ? `const __final = await __dl.saveAs(${j(args.savePath)}).catch(() => null)\n` : "const __final = await __dl.path().catch(() => null)\n";
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const __dlPromise = page.waitForEvent('download', { timeout: ${args.timeout} })\n` + trigger + "const __dl = await __dlPromise\nconst __name = typeof __dl.suggestedFilename === 'function' ? __dl.suggestedFilename() : null\nconst __url = typeof __dl.url === 'function' ? __dl.url() : null\n" + save + `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path: __final, suggestedFilename: __name, url: __url }))\n`, space$1, args.timeout + 15e3);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const __dlPromise = page.waitForEvent('download', { timeout: ${args.timeout} })\n` + trigger + "const __dl = await __dlPromise\nconst __name = typeof __dl.suggestedFilename === 'function' ? __dl.suggestedFilename() : null\nconst __url = typeof __dl.url === 'function' ? __dl.url() : null\n" + save + `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path: __final, suggestedFilename: __name, url: __url }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: args.timeout + 15e3
+		});
 	});
 }
 
@@ -802,8 +835,12 @@ function registerAdvancedTools(server, runner, tracker, enabled, isAllowed) {
 			space
 		})
 	}, async (args) => {
-		const target = activeSpace(tracker, args.space);
-		return runTool(runner, `${useSpace(target)}${ensureRealTab()}${SAFE_FN}const result = await page.evaluate(${j(args.expression)})\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, result: safe(result) }))\n`, target, 12e4);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${SAFE_FN}const result = await page.evaluate(${j(args.expression)})\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, result: safe(result) }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 12e4
+		});
 	});
 	if (isAllowed("ego_browser_cdp")) server.registerTool("ego_browser_cdp", {
 		description: "ADVANCED: issue a raw Chrome DevTools Protocol command.",
@@ -813,15 +850,19 @@ function registerAdvancedTools(server, runner, tracker, enabled, isAllowed) {
 			space
 		})
 	}, async (args) => {
-		const target = activeSpace(tracker, args.space);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		const call = args.params ? `await cdp(${j(args.method)}, ${j(args.params)})` : `await cdp(${j(args.method)})`;
-		return runTool(runner, `${useSpace(target)}${ensureRealTab()}${SAFE_FN}const result = ${call}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, result: safe(result) }))\n`, target, 12e4);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${SAFE_FN}const result = ${call}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, result: safe(result) }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 12e4
+		});
 	});
 	if (isAllowed("ego_browser_cli")) server.registerTool("ego_browser_cli", {
 		description: "ADVANCED: execute an arbitrary ego-browser Node script. Disabled unless explicitly enabled and allowlisted.",
 		inputSchema: z.object({ script: z.string().min(1).max(2e5) })
 	}, async (args) => {
-		return runTool(runner, `${args.script}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true }))\n`, void 0, 12e4);
+		return runTool(runner, `${args.script}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true }))\n`, { timeoutMs: 12e4 });
 	});
 	if (isAllowed("ego_browser_http")) server.registerTool("ego_browser_http", {
 		description: "ADVANCED: make an HTTP request from the browser context.",
@@ -841,14 +882,18 @@ function registerAdvancedTools(server, runner, tracker, enabled, isAllowed) {
 			space
 		})
 	}, async (args) => {
-		const target = activeSpace(tracker, args.space);
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		const options = {
 			method: args.method,
 			headers: args.headers,
 			timeout: args.timeout
 		};
 		if (args.body !== void 0) options.body = args.body;
-		return runTool(runner, `${useSpace(target)}${ensureRealTab()}${SAFE_FN}const result = await fetch.browser(${j(args.url)}, ${j(options)})\nconst status = typeof result.status !== 'undefined' ? result.status : 200\nlet body = null\ntry { body = typeof result.text === 'function' ? await result.text() : JSON.stringify(safe(result)) } catch { body = null }\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, status, body, url: ${j(args.url)} }))\n`, target, args.timeout + 15e3);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${SAFE_FN}const result = await fetch.browser(${j(args.url)}, ${j(options)})\nconst status = typeof result.status !== 'undefined' ? result.status : 200\nlet body = null\ntry { body = typeof result.text === 'function' ? await result.text() : JSON.stringify(safe(result)) } catch { body = null }\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, status, body, url: ${j(args.url)} }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: args.timeout + 15e3
+		});
 	});
 }
 
