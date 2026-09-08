@@ -15,7 +15,7 @@ export const snapshotSchema = z.object({
     .max(200_000)
     .optional()
     .default(20_000)
-    .describe('Truncate the returned tree at this many characters (default 20000) to keep long chat sessions affordable.'),
+    .describe('Truncate at this many characters (default 20000).'),
 })
 
 export const pageInfoSchema = z.object({
@@ -31,7 +31,7 @@ export const pageInfoSchema = z.object({
 const DIALOG_HINT =
   'page JavaScript is blocked, which almost always means a native alert/confirm/prompt is open. ' +
   'A dialog can only be answered by the call that opened it (pass onDialog to click/press), or by ' +
-  'a human clicking it in the browser window. Otherwise close this space with ego_browser_space_close ' +
+  'a human clicking it in the browser window. Otherwise close this space with space_close ' +
   'and redo the action with onDialog set.'
 
 const raceBlocked = (expr: string, ms = 5_000): string =>
@@ -44,12 +44,12 @@ export function registerObservationTools(
   tracker: ActiveSpaceTracker,
   isAllowed: (name: string) => boolean,
 ): void {
-  if (isAllowed('ego_browser_snapshot')) {
+  if (isAllowed('snapshot')) {
     server.registerTool(
-      'ego_browser_snapshot',
+      'snapshot',
       {
         description:
-          'Read the current page semantic tree as text annotated with refs and stable locators. Retries briefly when a just-navigated page returns an empty capture.',
+          'Page semantic tree as text with refs and stable locators. Retries briefly on an empty just-navigated capture.',
         inputSchema: snapshotSchema,
       },
       async (args) => {
@@ -75,11 +75,11 @@ export function registerObservationTools(
     )
   }
 
-  if (isAllowed('ego_browser_page_info')) {
+  if (isAllowed('page_info')) {
     server.registerTool(
-      'ego_browser_page_info',
+      'page_info',
       {
-        description: 'Return current page URL, title, viewport, scroll offsets, dimensions, and dialog state.',
+        description: 'Current URL, title, viewport, scroll offsets and dialog state.',
         inputSchema: pageInfoSchema,
       },
       async (args) => {

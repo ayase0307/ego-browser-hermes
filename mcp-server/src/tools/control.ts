@@ -5,22 +5,20 @@ import { j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
 import type { EgoRunner } from '../types.ts'
 import { errorResult, prepareSpace, runTool } from './shared.ts'
 
-const spaceArg = z.string().min(1).max(256).optional().describe('Task-space name or id; defaults to the active space.')
+const spaceArg = z.string().min(1).max(256).optional().describe('Task space; defaults to the active one.')
 
 export const controlSchema = z.object({
   action: z
     .enum(['handoff', 'takeover'])
-    .describe(
-      'handoff: give browser control to the human (login, CAPTCHA, payment). takeover: resume control — only after the user explicitly confirms they are done.',
-    ),
+    .describe('handoff: give control to the human (login, CAPTCHA). takeover: resume, only after the user confirms.'),
   space: spaceArg,
 })
 
 export const spaceListSchema = z.object({})
 
 export const tabsSchema = z.object({
-  action: z.enum(['list', 'close', 'switch']).describe('list all tabs, close one, or switch to one.'),
-  targetId: z.string().min(1).max(256).optional().describe('Tab targetId from a previous list; close without it closes the current tab.'),
+  action: z.enum(['list', 'close', 'switch']),
+  targetId: z.string().min(1).max(256).optional().describe('From tabs list; close without it closes the current tab.'),
   space: spaceArg,
 })
 
@@ -30,12 +28,12 @@ export function registerControlTools(
   tracker: ActiveSpaceTracker,
   isAllowed: (name: string) => boolean,
 ): void {
-  if (isAllowed('ego_browser_control')) {
+  if (isAllowed('control')) {
     server.registerTool(
-      'ego_browser_control',
+      'control',
       {
         description:
-          'Hand browser control to the human, or take it back. Only one side holds control at a time: while the user holds it, every other browser call fails with "user is controlling". Never take over without an explicit user confirmation.',
+          'Hand browser control to the human, or take it back. While the user holds it every other call fails with "user is controlling". Never take over unasked.',
         inputSchema: controlSchema,
       },
       async (args) => {
@@ -55,12 +53,12 @@ export function registerControlTools(
     )
   }
 
-  if (isAllowed('ego_browser_space_list')) {
+  if (isAllowed('space_list')) {
     server.registerTool(
-      'ego_browser_space_list',
+      'space_list',
       {
         description:
-          'List every task space the runtime knows about, with id, name and ownership. Use it to recover a space after a gateway restart, or to find leftover spaces to close.',
+          'Task spaces with id, name and ownership. Recovers a space after a gateway restart, or finds leftovers to close.',
         inputSchema: spaceListSchema,
       },
       async () => {
@@ -73,12 +71,12 @@ export function registerControlTools(
     )
   }
 
-  if (isAllowed('ego_browser_tabs')) {
+  if (isAllowed('tabs')) {
     server.registerTool(
-      'ego_browser_tabs',
+      'tabs',
       {
         description:
-          'List, close, or switch tabs inside the task space. Close scratch tabs as you go — navigate reuses tabs by URL, so they otherwise accumulate for the whole session.',
+          'List, close or switch tabs. navigate reuses tabs by URL, so close scratch tabs as you go.',
         inputSchema: tabsSchema,
       },
       async (args) => {

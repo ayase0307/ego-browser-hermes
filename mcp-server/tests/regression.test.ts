@@ -36,10 +36,10 @@ describe('regression: navigate failure must not poison the active space', () => 
     const tools = toolsOf(server)
 
     // 1. Successful navigation promotes "good" to active.
-    await call(server, 'ego_browser_navigate', { url: 'https://example.com', space: 'good', wait: true, timeout: 500 })
+    await call(server, 'navigate', { url: 'https://example.com', space: 'good', wait: true, timeout: 500 })
     // 2. A navigation to "poison" fails at the runner level.
     ctl.failNext = 1
-    const failed = await call(server, 'ego_browser_navigate', {
+    const failed = await call(server, 'navigate', {
       url: 'https://bad.example',
       space: 'poison',
       wait: true,
@@ -49,10 +49,10 @@ describe('regression: navigate failure must not poison the active space', () => 
 
     // 3. A subsequent no-space call must still target "good", not the failed "poison".
     scripts.length = 0
-    await call(server, 'ego_browser_page_info', {})
+    await call(server, 'page_info', {})
     expect(scripts[scripts.length - 1]).toContain('taskSpaces.useOrCreate("good")')
     expect(scripts[scripts.length - 1]).not.toContain('useOrCreate("poison")')
-    expect(tools.ego_browser_page_info).toBeDefined()
+    expect(tools.page_info).toBeDefined()
   })
 })
 
@@ -62,15 +62,15 @@ describe('regression: any failed tool must not poison the active space', () => {
     const server = createMcpServer({ defaultSpace: 'default' }, runner)
 
     // 1. Successful navigation promotes "good" to active.
-    await call(server, 'ego_browser_navigate', { url: 'https://example.com', space: 'good', wait: true, timeout: 500 })
+    await call(server, 'navigate', { url: 'https://example.com', space: 'good', wait: true, timeout: 500 })
     // 2. A snapshot on "poison" fails at the runner level.
     ctl.failNext = 1
-    const failed = await call(server, 'ego_browser_snapshot', { scope: 'full_page', space: 'poison' })
+    const failed = await call(server, 'snapshot', { scope: 'full_page', space: 'poison' })
     expect(failed.isError).toBe(true)
 
     // 3. A later no-space call must still target "good", not the failed "poison".
     scripts.length = 0
-    await call(server, 'ego_browser_page_info', {})
+    await call(server, 'page_info', {})
     expect(scripts[scripts.length - 1]).toContain('taskSpaces.useOrCreate("good")')
     expect(scripts[scripts.length - 1]).not.toContain('useOrCreate("poison")')
   })
@@ -78,7 +78,7 @@ describe('regression: any failed tool must not poison the active space', () => {
   it('keeps the good space after an ok:false snapshot on another space', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({ defaultSpace: 'default' }, runner)
-    await call(server, 'ego_browser_navigate', { url: 'https://example.com', space: 'good', wait: true, timeout: 500 })
+    await call(server, 'navigate', { url: 'https://example.com', space: 'good', wait: true, timeout: 500 })
 
     // Override runScript to return an ok:false snapshot on the "poison" space.
     const orig = runner.runScript.bind(runner)
@@ -88,11 +88,11 @@ describe('regression: any failed tool must not poison the active space', () => {
       }
       return orig(script, options)
     }
-    const failed = await call(server, 'ego_browser_snapshot', { scope: 'full_page', space: 'poison' })
+    const failed = await call(server, 'snapshot', { scope: 'full_page', space: 'poison' })
     expect(failed.isError).toBe(true)
 
     scripts.length = 0
-    await call(server, 'ego_browser_page_info', {})
+    await call(server, 'page_info', {})
     expect(scripts[scripts.length - 1]).toContain('taskSpaces.useOrCreate("good")')
     expect(scripts[scripts.length - 1]).not.toContain('useOrCreate("poison")')
   })
@@ -108,7 +108,7 @@ describe('regression: navigate must reject non-http(s) schemes', () => {
       'data:text/html,<h1>hi</h1>',
       'chrome://settings',
     ]) {
-      const result = await call(server, 'ego_browser_navigate', { url, wait: true, timeout: 500 })
+      const result = await call(server, 'navigate', { url, wait: true, timeout: 500 })
       expect(result.isError).toBe(true)
     }
     expect(scripts).toHaveLength(0)
@@ -118,7 +118,7 @@ describe('regression: navigate must reject non-http(s) schemes', () => {
     const { runner } = scriptedRunner()
     const server = createMcpServer({}, runner)
     for (const url of ['https://example.com', 'http://localhost:8080']) {
-      const result = await call(server, 'ego_browser_navigate', { url, wait: true, timeout: 500 })
+      const result = await call(server, 'navigate', { url, wait: true, timeout: 500 })
       expect(result.isError).toBeUndefined()
     }
   })
@@ -136,7 +136,7 @@ describe('regression: script-level ok:false must surface as an MCP error', () =>
       getStatus: async () => ({ ok: true, available: true, path: 'mock', exitCode: 0 }),
     }
     const server = createMcpServer({}, runner)
-    const result = await call(server, 'ego_browser_snapshot', { scope: 'full_page' })
+    const result = await call(server, 'snapshot', { scope: 'full_page' })
     expect(result.isError).toBe(true)
     const payload = JSON.parse(result.content[0].text)
     expect(payload.ok).toBe(false)

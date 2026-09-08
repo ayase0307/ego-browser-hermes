@@ -5,7 +5,7 @@ import { dialogReadback, ensureRealTab, j, SENTINEL, useSpace } from '../runtime
 import type { EgoRunner } from '../types.ts'
 import { errorResult, prepareSpace, runTool } from './shared.ts'
 
-const spaceArg = z.string().min(1).max(256).optional().describe('Task-space name or id; defaults to the active space.')
+const spaceArg = z.string().min(1).max(256).optional().describe('Task space; defaults to the active one.')
 
 export const pressSchema = z
   .object({
@@ -14,27 +14,25 @@ export const pressSchema = z
       .min(1)
       .max(200)
       .optional()
-      .describe('Key or combo to press, e.g. "Enter", "Tab", "Escape", "Control+a".'),
-    text: z.string().max(100_000).optional().describe('Text to type with real key events (for editors that ignore fill).'),
+      .describe('e.g. "Enter", "Tab", "Control+a".'),
+    text: z.string().max(100_000).optional().describe('Typed with real key events, for editors that ignore fill.'),
     selector: z
       .string()
       .min(1)
       .max(4096)
       .optional()
-      .describe('Optional CSS/xpath/ref/loc selector to focus before typing or pressing.'),
+      .describe('Focused before typing or pressing.'),
     space: spaceArg,
   onDialog: z
     .enum(['accept', 'dismiss'])
     .optional()
-    .describe(
-      'What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.',
-    ),
+    .describe('Answer a native dialog this action opens. Only this call can; omit to just report it.'),
   })
   .refine((v) => Boolean(v.key) || Boolean(v.text), { message: 'Provide key, text, or both.' })
 
 export const scrollSchema = z.object({
-  dy: z.number().int().min(-100_000).max(100_000).optional().default(600).describe('Vertical scroll in CSS pixels (positive scrolls down).'),
-  dx: z.number().int().min(-100_000).max(100_000).optional().default(0).describe('Horizontal scroll in CSS pixels.'),
+  dy: z.number().int().min(-100_000).max(100_000).optional().default(600).describe('CSS pixels; positive scrolls down.'),
+  dx: z.number().int().min(-100_000).max(100_000).optional().default(0),
   space: spaceArg,
 })
 
@@ -44,12 +42,12 @@ export function registerInputTools(
   tracker: ActiveSpaceTracker,
   isAllowed: (name: string) => boolean,
 ): void {
-  if (isAllowed('ego_browser_press')) {
+  if (isAllowed('press')) {
     server.registerTool(
-      'ego_browser_press',
+      'press',
       {
         description:
-          'Send real keyboard input: type text and/or press a key combo, optionally focusing a selector first. Use this to submit a search box with "Enter" after fill.',
+          'Real keyboard input: focus a selector, type text, press a key combo. Submits a search box with "Enter" after fill.',
         inputSchema: pressSchema,
       },
       async (args) => {
@@ -69,12 +67,12 @@ export function registerInputTools(
     )
   }
 
-  if (isAllowed('ego_browser_scroll')) {
+  if (isAllowed('scroll')) {
     server.registerTool(
-      'ego_browser_scroll',
+      'scroll',
       {
         description:
-          'Scroll the page with a real wheel event and return the new scroll offsets. Needed for lazy-loaded and infinite-scroll content that a snapshot cannot reach.',
+          'Scroll with a real wheel event; returns new offsets and movedY. Needed for lazy-loaded content.',
         inputSchema: scrollSchema,
       },
       async (args) => {

@@ -17,6 +17,15 @@ export { NodeEgoRunner } from './runtime/runner.ts'
 
 const envToolList = process.env.EGO_BROWSER_TOOLS
 
+/**
+ * Tools dropped their redundant `ego_browser_` prefix (the MCP host already namespaces by server
+ * name, so it only ever read as `mcp_ego_browser_ego_browser_click`). Existing EGO_BROWSER_TOOLS
+ * allowlists still use the old names, so accept both.
+ */
+export function normalizeToolName(name: string): string {
+  return name.trim().replace(/^ego_browser_/, '')
+}
+
 export const DEFAULT_CONFIG: McpConfig = {
   egoBin: process.env.EGO_BROWSER_BIN || '',
   defaultSpace: 'hermes-agent',
@@ -27,27 +36,27 @@ export const DEFAULT_CONFIG: McpConfig = {
   allowedTools:
     envToolList === undefined
       ? undefined
-      : envToolList.split(',').map((name) => name.trim()).filter(Boolean),
+      : envToolList.split(',').map((name) => normalizeToolName(name)).filter(Boolean),
 }
 
 export const DEFAULT_SAFE_TOOLS = [
-  'ego_browser_status',
-  'ego_browser_space_open',
-  'ego_browser_space_close',
-  'ego_browser_navigate',
-  'ego_browser_snapshot',
-  'ego_browser_page_info',
-  'ego_browser_click',
-  'ego_browser_fill',
-  'ego_browser_wait',
-  'ego_browser_press',
-  'ego_browser_scroll',
-  'ego_browser_screenshot',
-  'ego_browser_download',
-  'ego_browser_upload',
-  'ego_browser_control',
-  'ego_browser_space_list',
-  'ego_browser_tabs',
+  'status',
+  'space_open',
+  'space_close',
+  'navigate',
+  'snapshot',
+  'page_info',
+  'click',
+  'fill',
+  'wait',
+  'press',
+  'scroll',
+  'screenshot',
+  'download',
+  'upload',
+  'control',
+  'space_list',
+  'tabs',
 ] as const
 
 export function createMcpServer(
@@ -60,7 +69,7 @@ export function createMcpServer(
 
   const isAllowed = (name: string): boolean => {
     if (config.allowedTools !== undefined) {
-      return config.allowedTools.includes(name)
+      return config.allowedTools.map(normalizeToolName).includes(name)
     }
     return (
       (DEFAULT_SAFE_TOOLS as readonly string[]).includes(name) ||
@@ -73,12 +82,12 @@ export function createMcpServer(
     version: '0.2.0',
   })
 
-  if (isAllowed('ego_browser_status')) {
+  if (isAllowed('status')) {
     server.registerTool(
-      'ego_browser_status',
+      'status',
       {
         description:
-          'Check whether the ego-browser runtime is available and reachable, and whether artifacts have a delivery directory configured.',
+          'Runtime availability, and whether an output directory for delivering files is configured.',
       },
       async (): Promise<McpToolResponse> => {
         try {

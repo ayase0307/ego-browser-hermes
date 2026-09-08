@@ -42,15 +42,15 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
   describe('default safe exposure and allowedTools filtering', () => {
     it('restricts registered tools when allowedTools is specified', () => {
       const server = createMcpServer({
-        allowedTools: ['ego_browser_status', 'ego_browser_navigate'],
+        allowedTools: ['status', 'navigate'],
       })
       const anyServer = server as any
       const tools = anyServer._registeredTools || anyServer._tools
 
-      expect(tools.ego_browser_status).toBeDefined()
-      expect(tools.ego_browser_navigate).toBeDefined()
-      expect(tools.ego_browser_space_open).toBeUndefined()
-      expect(tools.ego_browser_space_close).toBeUndefined()
+      expect(tools.status).toBeDefined()
+      expect(tools.navigate).toBeDefined()
+      expect(tools.space_open).toBeUndefined()
+      expect(tools.space_close).toBeUndefined()
     })
 
     it('registers no tools when allowedTools is empty', () => {
@@ -61,15 +61,15 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
     })
 
     it('ignores unknown tool names in allowedTools gracefully', () => {
-      const server = createMcpServer({ allowedTools: ['ego_browser_status', 'unknown_future_tool'] })
+      const server = createMcpServer({ allowedTools: ['status', 'unknown_future_tool'] })
       const anyServer = server as any
       const tools = anyServer._registeredTools || anyServer._tools
-      expect(Object.keys(tools)).toEqual(['ego_browser_status'])
+      expect(Object.keys(tools)).toEqual(['status'])
     })
   })
 
   describe('tool executions', () => {
-    it('handles ego_browser_status success and error', async () => {
+    it('handles status success and error', async () => {
       let shouldFail = false
       const mockRunner: EgoRunner = {
         runScript: async () => ({ ok: true, stdout: '', stderr: '' }),
@@ -88,7 +88,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
 
       const server = createMcpServer({}, mockRunner)
       const anyServer = server as any
-      const statusTool = (anyServer._registeredTools || anyServer._tools).ego_browser_status
+      const statusTool = (anyServer._registeredTools || anyServer._tools).status
       const handler = statusTool.handler || statusTool.execute
 
       // Success
@@ -107,7 +107,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
       expect(errData.error).toContain('Connection refused')
     })
 
-    it('handles ego_browser_space_open and active space tracking', async () => {
+    it('handles space_open and active space tracking', async () => {
       let executedScript = ''
       const mockRunner: EgoRunner = {
         runScript: async (script): Promise<EgoScriptResult> => {
@@ -124,7 +124,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
 
       const server = createMcpServer({ defaultSpace: 'hermes-agent' }, mockRunner)
       const anyServer = server as any
-      const openTool = (anyServer._registeredTools || anyServer._tools).ego_browser_space_open
+      const openTool = (anyServer._registeredTools || anyServer._tools).space_open
       const handler = openTool.handler || openTool.execute
 
       const res = await handler({ name: 'my-research' })
@@ -135,7 +135,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
       expect(payload.activeSpace).toBe('space-99')
     })
 
-    it('handles ego_browser_space_open failure cleanly', async () => {
+    it('handles space_open failure cleanly', async () => {
       const mockRunner: EgoRunner = {
         runScript: async (): Promise<EgoScriptResult> => ({
           ok: false,
@@ -148,7 +148,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
 
       const server = createMcpServer({}, mockRunner)
       const anyServer = server as any
-      const openTool = (anyServer._registeredTools || anyServer._tools).ego_browser_space_open
+      const openTool = (anyServer._registeredTools || anyServer._tools).space_open
       const res = await (openTool.handler || openTool.execute)({ name: 'fail-space' })
 
       expect(res.isError).toBe(true)
@@ -157,7 +157,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
       expect(payload.error).toContain('Browser daemon not reachable')
     })
 
-    it('handles ego_browser_space_close with keep flag and tracker reset', async () => {
+    it('handles space_close with keep flag and tracker reset', async () => {
       let executedScript = ''
       const mockRunner: EgoRunner = {
         runScript: async (script): Promise<EgoScriptResult> => {
@@ -174,7 +174,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
 
       const server = createMcpServer({ defaultSpace: 'hermes-agent' }, mockRunner)
       const anyServer = server as any
-      const closeTool = (anyServer._registeredTools || anyServer._tools).ego_browser_space_close
+      const closeTool = (anyServer._registeredTools || anyServer._tools).space_close
       const handler = closeTool.handler || closeTool.execute
 
       const res = await handler({ name: 'space-99', keep: true })
@@ -185,7 +185,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
       expect(payload.activeSpace).toBe('hermes-agent')
     })
 
-    it('handles ego_browser_navigate execution and parameters', async () => {
+    it('handles navigate execution and parameters', async () => {
       let executedScript = ''
       let passedOptions: { timeoutMs?: number } | undefined
       const mockRunner: EgoRunner = {
@@ -208,7 +208,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
 
       const server = createMcpServer({ defaultSpace: 'hermes-agent' }, mockRunner)
       const anyServer = server as any
-      const navTool = (anyServer._registeredTools || anyServer._tools).ego_browser_navigate
+      const navTool = (anyServer._registeredTools || anyServer._tools).navigate
       const handler = navTool.handler || navTool.execute
 
       const res = await handler({
@@ -228,7 +228,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
       expect(payload.activeSpace).toBe('custom-nav-space')
     })
 
-    it('handles ego_browser_navigate failure cleanly', async () => {
+    it('handles navigate failure cleanly', async () => {
       const mockRunner: EgoRunner = {
         runScript: async (): Promise<EgoScriptResult> => ({
           ok: false,
@@ -241,7 +241,7 @@ describe('MCP Server Tool Registry & Safe Exposure', () => {
 
       const server = createMcpServer({}, mockRunner)
       const anyServer = server as any
-      const navTool = (anyServer._registeredTools || anyServer._tools).ego_browser_navigate
+      const navTool = (anyServer._registeredTools || anyServer._tools).navigate
       const res = await (navTool.handler || navTool.execute)({
         url: 'https://invalid-non-existent-domain.xyz',
         wait: true,

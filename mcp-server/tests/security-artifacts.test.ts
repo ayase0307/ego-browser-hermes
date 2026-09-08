@@ -29,13 +29,13 @@ describe('artifact tools', () => {
   it('keeps download and upload in the default safe registry', () => {
     const names = Object.keys(toolsOf(createMcpServer()))
     expect(names.sort()).toEqual([...DEFAULT_SAFE_TOOLS].sort())
-    expect(names).toContain('ego_browser_download')
-    expect(names).toContain('ego_browser_upload')
+    expect(names).toContain('download')
+    expect(names).toContain('upload')
   })
 
   it('rejects relative upload paths before spawning', async () => {
     const r = recordingRunner()
-    const result = await call(createMcpServer({}, r.runner), 'ego_browser_upload', {
+    const result = await call(createMcpServer({}, r.runner), 'upload', {
       selector: 'input[type=file]',
       path: 'relative.txt',
     })
@@ -46,7 +46,7 @@ describe('artifact tools', () => {
   it('builds selector-triggered download without arbitrary page script support', async () => {
     const r = recordingRunner({ ok: true, path: 'D:/downloads/report.pdf' })
     const server = createMcpServer({}, r.runner)
-    const result = await call(server, 'ego_browser_download', {
+    const result = await call(server, 'download', {
       triggerSelector: 'a.download',
       timeout: 5000,
     })
@@ -70,25 +70,25 @@ describe('advanced tool gate', () => {
 
   it('requires both advanced enablement and allowlist membership when allowlisted', () => {
     const disabled = Object.keys(
-      toolsOf(createMcpServer({ enableAdvanced: false, allowedTools: ['ego_browser_js'] })),
+      toolsOf(createMcpServer({ enableAdvanced: false, allowedTools: ['js'] })),
     )
-    expect(disabled).not.toContain('ego_browser_js')
+    expect(disabled).not.toContain('js')
 
     const enabled = Object.keys(
-      toolsOf(createMcpServer({ enableAdvanced: true, allowedTools: ['ego_browser_status', 'ego_browser_js'] })),
+      toolsOf(createMcpServer({ enableAdvanced: true, allowedTools: ['status', 'js'] })),
     )
-    expect(enabled.sort()).toEqual(['ego_browser_js', 'ego_browser_status'])
+    expect(enabled.sort()).toEqual(['js', 'status'])
   })
 
   it('JSON-escapes JS expressions and CDP parameters', async () => {
     const js = recordingRunner({ ok: true, result: 'x' })
     const jsServer = createMcpServer({ enableAdvanced: true }, js.runner)
-    await call(jsServer, 'ego_browser_js', { expression: 'document.title + "\\n"' })
+    await call(jsServer, 'js', { expression: 'document.title + "\\n"' })
     expect(js.scripts[0]).toContain('page.evaluate("document.title + \\"\\\\n\\"")')
 
     const cdp = recordingRunner({ ok: true })
     const cdpServer = createMcpServer({ enableAdvanced: true }, cdp.runner)
-    await call(cdpServer, 'ego_browser_cdp', { method: 'Page.handleJavaScriptDialog', params: { accept: true } })
+    await call(cdpServer, 'cdp', { method: 'Page.handleJavaScriptDialog', params: { accept: true } })
     expect(cdp.scripts[0]).toContain('cdp("Page.handleJavaScriptDialog", {"accept":true})')
   })
 })

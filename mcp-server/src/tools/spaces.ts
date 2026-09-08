@@ -1,16 +1,22 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
-import { bool, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
+import { bool, ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
+import { isHttpUrl } from './navigation.ts'
 import type { EgoRunner, McpToolResponse } from '../types.ts'
 
 export const spaceOpenSchema = z.object({
-  name: z.string().min(1).max(256).describe('Short name or identifier for the task space (e.g. "search-task").'),
+  name: z.string().min(1).max(256).describe('Short task-space name, e.g. "discord-1194-invoice".'),
+  url: z
+    .string()
+    .max(2048)
+    .optional()
+    .describe('Absolute http(s) URL to open right away, saving a separate navigate call.'),
 })
 
 export const spaceCloseSchema = z.object({
-  name: z.string().min(1).max(256).describe('Task-space name or numeric id to close.'),
-  keep: z.boolean().optional().default(false).describe('Keep the live page open (default false: close it).'),
+  name: z.string().min(1).max(256).describe('Task-space name or id.'),
+  keep: z.boolean().optional().default(false).describe('Keep the live page open (default false).'),
 })
 
 export function registerSpaceTools(
@@ -19,23 +25,43 @@ export function registerSpaceTools(
   tracker: ActiveSpaceTracker,
   isAllowed: (name: string) => boolean,
 ): void {
-  if (isAllowed('ego_browser_space_open')) {
+  if (isAllowed('space_open')) {
     server.registerTool(
-      'ego_browser_space_open',
+      'space_open',
       {
         description:
-          'Open (or reuse) an ego-lite task space — an isolated browsing context that inherits your login state. It becomes the active space for later calls.',
+          'Open or reuse an isolated task space that inherits your login state; becomes the active space.',
         inputSchema: spaceOpenSchema,
       },
       async (args): Promise<McpToolResponse> => {
         try {
+          if (args.url !== undefined && !isHttpUrl(args.url)) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    { ok: false, error: `Unsupported URL scheme. Only http and https are allowed: ${args.url}` },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+              isError: true,
+            }
+          }
+          const open = args.url
+            ? `${ensureRealTab()}await page.goto(${j(args.url)}, { wait: true, timeout: 20000 })\n` +
+              `const pginfo = await page.info()\n`
+            : `const pginfo = null\n`
           const script =
             `${useSpace(args.name)}` +
+            open +
             `console.log('${SENTINEL}' + JSON.stringify({ ok: true, id: task.id ?? null, name: task.name ?? ${j(
               args.name,
-            )} }))\n`
+            )}, page: pginfo }))\n`
 
-          const result = await runner.runScript(script)
+          const result = await runner.runScript(script, { timeoutMs: args.url ? 45_000 : 30_000 })
           if (!result.ok) {
             return {
               content: [{ type: 'text', text: JSON.stringify({ ok: false, error: result.error }, null, 2) }],
@@ -64,12 +90,12 @@ export function registerSpaceTools(
     )
   }
 
-  if (isAllowed('ego_browser_space_close')) {
+  if (isAllowed('space_close')) {
     server.registerTool(
-      'ego_browser_space_close',
+      'space_close',
       {
         description:
-          'Complete (close) an ego-lite task space. Must be the final call for a task — never leave a space hanging. `keep: true` keeps the page open for the user.',
+          'Close a task space. Must be the final call for a task; keep: true leaves the page open for the user.',
         inputSchema: spaceCloseSchema,
       },
       async (args): Promise<McpToolResponse> => {

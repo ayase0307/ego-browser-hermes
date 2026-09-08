@@ -88,7 +88,7 @@ const list = await rpc('tools/list', {})
 const names = list.result.tools.map((t) => t.name).sort()
 
 console.log(bold('\n╭─ Hermes MCP: ego_browser ') + dim('(real server, faked Chrome)'))
-console.log(`│  ${names.length} tools: ${dim(names.map((n) => n.replace('ego_browser_', '')).join(' '))}`)
+console.log(`│  ${names.length} tools: ${dim(names.map((n) => n.replace('', '')).join(' '))}`)
 console.log(bold('╰─\n'))
 
 console.log(bold(`╭─ #billing  ${dim('Discord')}`))
@@ -96,15 +96,15 @@ chat('kirit', '幫我上 billing.example.com 把這個月的發票 PDF 抓下來
 chat('hermes', '開瀏覽器查一下，稍等 ⏳')
 note('progress line first — a long tool chain must not look dead in chat')
 
-await tool('ego_browser_status', {})
-await tool('ego_browser_space_open', { name: SPACE })
+await tool('status', {})
+await tool('space_open', { name: SPACE })
 note('space name carries the channel id, so another chat cannot steal the active space')
-await tool('ego_browser_navigate', { url: 'https://billing.example.com/invoices', space: SPACE })
-const wall = await tool('ego_browser_snapshot', { space: SPACE, scope: 'full_page', maxChars: 20000 })
+await tool('navigate', { url: 'https://billing.example.com/invoices', space: SPACE })
+const wall = await tool('snapshot', { space: SPACE, scope: 'full_page', maxChars: 20000 })
 
 console.log()
 note(`snapshot shows a login wall (${wall.totalChars} chars, truncated=${wall.truncated})`)
-await tool('ego_browser_control', { action: 'handoff', space: SPACE })
+await tool('control', { action: 'handoff', space: SPACE })
 chat(
   'hermes',
   '這個站需要登入，我把瀏覽器交還給你了 👉 請到主機上那個 Chromium 視窗登入，好了在這邊跟我說一聲。',
@@ -112,25 +112,25 @@ chat(
 
 console.log()
 note('while the user holds control, every other call is a hard stop — not something to retry')
-await tool('ego_browser_snapshot', { space: SPACE, scope: 'full_page' }, { expectError: true })
+await tool('snapshot', { space: SPACE, scope: 'full_page' }, { expectError: true })
 
 console.log()
 chat('kirit', '好了，登進去了')
-await tool('ego_browser_control', { action: 'takeover', space: SPACE })
+await tool('control', { action: 'takeover', space: SPACE })
 note('takeover only after the user says so')
 
-await tool('ego_browser_fill', { selector: 'css:input#q', text: '2026-09', space: SPACE })
-await tool('ego_browser_press', { key: 'Enter', selector: 'css:input#q', space: SPACE })
+await tool('fill', { selector: 'css:input#q', text: '2026-09', space: SPACE })
+await tool('press', { key: 'Enter', selector: 'css:input#q', space: SPACE })
 note('fill + press Enter — before this change the safe tool set could not submit a search box')
-await tool('ego_browser_scroll', { dy: 900, space: SPACE })
-await tool('ego_browser_snapshot', { space: SPACE, scope: 'full_page' })
+await tool('scroll', { dy: 900, space: SPACE })
+await tool('snapshot', { space: SPACE, scope: 'full_page' })
 
-const shot = await tool('ego_browser_screenshot', { space: SPACE })
-const dl = await tool('ego_browser_download', { triggerSelector: 'loc=href:/invoices/2026-09.pdf', space: SPACE })
+const shot = await tool('screenshot', { space: SPACE })
+const dl = await tool('download', { triggerSelector: 'loc=href:/invoices/2026-09.pdf', space: SPACE })
 note('both artifacts landed in EGO_BROWSER_OUTPUT_DIR, so the host can attach them')
 
-await tool('ego_browser_tabs', { action: 'close', space: SPACE })
-await tool('ego_browser_space_close', { name: SPACE, keep: false })
+await tool('tabs', { action: 'close', space: SPACE })
+await tool('space_close', { name: SPACE, keep: false })
 
 console.log()
 chat('hermes', '2026-09 的發票抓好了，NT$12,480（未付）。附上 PDF 跟頁面截圖：')

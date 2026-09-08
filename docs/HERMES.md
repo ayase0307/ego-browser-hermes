@@ -38,29 +38,20 @@ hermes mcp add ego_browser \
 hermes mcp test ego_browser
 ```
 
-Hermes prefixes the tools with the server name. For example, MCP tool `ego_browser_status` becomes `mcp_ego_browser_ego_browser_status`.
+Hermes prefixes the tools with the server name. For example, MCP tool `status` becomes `mcp_ego_browser_status`. Tool names carry no `ego_browser_` prefix of their own; an `EGO_BROWSER_TOOLS` allowlist written with the old prefixed names is still accepted.
 
 After adding the server, reload MCP in the active session or restart the gateway so long-lived Discord/Telegram sessions discover the new tools.
 
 ## Default safe tools
 
-- `ego_browser_status`
-- `ego_browser_space_open`
-- `ego_browser_space_close`
-- `ego_browser_space_list`
-- `ego_browser_navigate`
-- `ego_browser_tabs`
-- `ego_browser_snapshot`
-- `ego_browser_page_info`
-- `ego_browser_click`
-- `ego_browser_fill`
-- `ego_browser_press`
-- `ego_browser_scroll`
-- `ego_browser_wait`
-- `ego_browser_control`
-- `ego_browser_screenshot`
-- `ego_browser_download`
-- `ego_browser_upload`
+- `status`
+- `space_open` (optionally with a `url`) / `space_close` / `space_list`
+- `navigate` / `tabs`
+- `snapshot` / `page_info`
+- `click` / `fill` / `press` / `scroll` / `wait`
+- `control` (hand control to the user / take it back)
+- `screenshot`
+- `upload` / `download`
 
 ## Artifact delivery
 
@@ -81,10 +72,10 @@ Advanced tools remain absent unless explicitly enabled:
 EGO_BROWSER_ENABLE_ADVANCED=true
 ```
 
-The advanced set is `ego_browser_js`, `ego_browser_cdp`, `ego_browser_cli`, and `ego_browser_http`. To expose only selected tools, set a comma-separated allowlist:
+The advanced set is `js`, `cdp`, `cli`, and `http`. To expose only selected tools, set a comma-separated allowlist:
 
 ```text
-EGO_BROWSER_TOOLS=ego_browser_status,ego_browser_snapshot,ego_browser_js
+EGO_BROWSER_TOOLS=status,snapshot,js
 ```
 
 When an allowlist is present, no unlisted safe or advanced tool is registered. Advanced tools still require `EGO_BROWSER_ENABLE_ADVANCED=true` even if named in the allowlist.
@@ -100,7 +91,7 @@ When an allowlist is present, no unlisted safe or advanced tool is registered. A
 - Safe downloads do not accept arbitrary trigger JavaScript.
 - Keep advanced tools disabled unless a concrete task requires them; keyboard, scroll and dialog
   handling are part of the safe surface precisely so nobody enables `js`/`cdp` to press Enter.
-- `ego_browser_control` hands the task space to the user and takes it back only when called
+- `control` hands the task space to the user and takes it back only when called
   explicitly; while the user holds control every other call fails with "user is controlling".
 - Every tool call is its own runtime process. A native dialog blocks page JavaScript for any
   process that attaches afterwards, so `click`/`press` take `onDialog` to answer one in the same

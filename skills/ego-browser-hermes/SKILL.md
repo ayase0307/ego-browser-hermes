@@ -9,10 +9,9 @@ metadata:
 
 # ego-browser for Hermes
 
-Tools are exposed as `mcp_<server>_ego_browser_*`, where `<server>` is the name used in
-`hermes mcp add` (the documented install uses `ego_browser`, giving
-`mcp_ego_browser_ego_browser_navigate`). This file names them without the host prefix —
-`navigate`, `snapshot`, `press` — match them against the tool list you actually have.
+Tools are exposed as `mcp_<server>_<tool>`, where `<server>` is the name used in `hermes mcp add`
+(the documented install uses `ego_browser`, giving `mcp_ego_browser_navigate`). This file names
+them without that host prefix — `navigate`, `snapshot`, `press`.
 
 Prefer `web_search` / `web_extract` for ordinary read-only research. Use this browser when the
 task needs interaction, authenticated state, a file, or a picture of a real page.
@@ -56,8 +55,9 @@ can silently redirect your calls.
 ## Safe workflow
 
 1. `status` before the first browser task in a session.
-2. `space_open` with your explicit space name.
-3. `navigate`, then observe with `snapshot` or `page_info` before acting.
+2. `space_open` with your explicit space name — pass `url` to open the first page in the same
+   call, which saves a whole round trip the user would otherwise wait through.
+3. `navigate` for later pages, then observe with `snapshot` or `page_info` before acting.
 4. Act with `click`, `fill`, `press`, `scroll`. Prefer semantic refs/locators from the latest
    snapshot; use coordinates only when the page has no useful semantic controls.
 5. After every meaningful click, fill, key press, navigation, upload or download, read back page
