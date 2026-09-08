@@ -26,8 +26,11 @@ Use the `mcp_ego_browser_ego_browser_*` tools for interactive sites that need a 
 - Never guess credentials or seize control back without confirmation.
 - Keep each task in its original task space across follow-ups so authenticated state and tabs remain consistent.
 
-## Artifacts
+## Limits and safety
 
+- `navigate` accepts only `http` and `https` URLs. `file:`, `javascript:`, `data:`, and `chrome://` are rejected before the browser runs.
+- A failed call (navigate, snapshot, click, fill, wait, screenshot, upload, download, or an advanced tool) does not change the active task space; later calls keep targeting the space that was active before the failure.
+- An empty snapshot (no semantic content after retries) is reported as an error, not a silent success.
 - Screenshot, upload, and download paths must be absolute.
 - Verify a returned file exists before claiming delivery.
 - The safe download tool accepts a selector trigger, not arbitrary page JavaScript.

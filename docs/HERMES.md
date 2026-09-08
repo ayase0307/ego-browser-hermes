@@ -76,6 +76,8 @@ When an allowlist is present, no unlisted safe or advanced tool is registered. A
 ## Security notes
 
 - Child processes use `spawn()` with argv arrays; commands are not passed through a shell.
+- `navigate` only accepts `http`/`https` URLs; `file:`, `javascript:`, `data:`, and `chrome://` are rejected before launch.
+- A failed call (navigate, snapshot, click, fill, wait, screenshot, upload, download, or an advanced tool) does not change the active task space pointer.
 - Browser-mutating calls are serialized within one MCP server process.
 - Upload paths must be absolute and exist before the browser runs.
 - Screenshot and download destination paths must be absolute.
