@@ -18,21 +18,23 @@ The original DSH sidebar/live-view UI has not been ported. This release focuses 
 
 ## Default tools
 
-17 safe tools. The keyboard, scroll and control tools exist so that ordinary interactive work —
+17 safe tools. Names carry no `ego_browser_` prefix — the MCP host already namespaces by server
+name, so Hermes shows them as `mcp_ego_browser_navigate`. An `EGO_BROWSER_TOOLS` allowlist written
+with the old prefixed names still works. The keyboard, scroll and control tools exist so that ordinary interactive work —
 submitting a search box, reaching lazy-loaded content, letting a human log in — never requires
 enabling the advanced surface. `click` and `press` take `onDialog` to answer a native
 alert/confirm/prompt they trigger.
 
-- `ego_browser_status`
-- `ego_browser_space_open` / `ego_browser_space_close` / `ego_browser_space_list`
-- `ego_browser_navigate` / `ego_browser_tabs`
-- `ego_browser_snapshot` / `ego_browser_page_info`
-- `ego_browser_click` / `ego_browser_fill` / `ego_browser_press` / `ego_browser_scroll` / `ego_browser_wait`
-- `ego_browser_control` (hand control to the user / take it back)
-- `ego_browser_screenshot`
-- `ego_browser_upload` / `ego_browser_download`
+- `status`
+- `space_open` (optionally with a `url`) / `space_close` / `space_list`
+- `navigate` / `tabs`
+- `snapshot` / `page_info`
+- `click` / `fill` / `press` / `scroll` / `wait`
+- `control` (hand control to the user / take it back)
+- `screenshot`
+- `upload` / `download`
 
-Raw JavaScript, CDP, arbitrary CLI scripts, and HTTP requests are disabled by default. They require `EGO_BROWSER_ENABLE_ADVANCED=true`; `EGO_BROWSER_TOOLS` can further restrict the exposed set.
+Raw JavaScript, CDP, arbitrary CLI scripts, and HTTP requests (`js`, `cdp`, `cli`, `http`) are disabled by default. They require `EGO_BROWSER_ENABLE_ADVANCED=true`; `EGO_BROWSER_TOOLS` can further restrict the exposed set.
 
 ## Build and verify
 

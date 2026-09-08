@@ -72,59 +72,61 @@ function check(label, condition, detail) {
 let opened = false
 try {
   await client.connect(transport)
-  const status = parse(await client.callTool({ name: 'ego_browser_status', arguments: {} }))
+  const status = parse(await client.callTool({ name: 'status', arguments: {} }))
   check('runtime available', status.available, status.path)
 
-  const openedSpace = parse(await client.callTool({ name: 'ego_browser_space_open', arguments: { name: space } }))
+  // space_open carries the first URL, so a task costs one runtime spawn less
+  const openedSpace = parse(await client.callTool({ name: 'space_open', arguments: { name: space, url: base } }))
   opened = true
   check('space_open', Boolean(openedSpace.ok), `activeSpace=${openedSpace.activeSpace}`)
+  check('space_open opened the page in the same call', openedSpace.page?.url?.startsWith('http://127.0.0.1'), openedSpace.page?.title)
 
-  const nav = await callTool('ego_browser_navigate', { url: base, wait: true, timeout: 30_000 })
-  check('navigate to fixture', nav.page?.url?.startsWith('http://127.0.0.1'), nav.page?.title)
+  const nav = await callTool('navigate', { url: `${base}?nav=1`, wait: true, timeout: 30_000 })
+  check('navigate to fixture', nav.page?.url?.includes('nav=1'), nav.page?.title)
 
-  const snap = await callTool('ego_browser_snapshot', { scope: 'full_page', maxChars: 20_000 })
+  const snap = await callTool('snapshot', { scope: 'full_page', maxChars: 20_000 })
   check('snapshot has content', typeof snap.text === 'string' && snap.text.length > 0, `${snap.totalChars} chars`)
   check('snapshot reports truncation flag', snap.truncated === false, `truncated=${snap.truncated}`)
 
   // press: fill the box, then submit the form with Enter — the query must land in the URL.
-  await callTool('ego_browser_fill', { selector: 'css:#q', text: 'hermes' })
-  const pressed = await callTool('ego_browser_press', { key: 'Enter', selector: 'css:#q' })
-  const afterPress = await callTool('ego_browser_page_info', {})
+  await callTool('fill', { selector: 'css:#q', text: 'hermes' })
+  const pressed = await callTool('press', { key: 'Enter', selector: 'css:#q' })
+  const afterPress = await callTool('page_info', {})
   check('press Enter submitted the form', afterPress.page?.url?.includes('q=hermes'), afterPress.page?.url)
   check('press reported the key', pressed.pressed === 'Enter')
 
   // dialog: only the call that opens a native dialog can answer it — a later call, even a
   // browser-level CDP one, blocks on the modal. onDialog does it in the same script.
-  const answered = await callTool('ego_browser_click', {
+  const answered = await callTool('click', {
     selector: 'css:#ask',
     timeout: 20_000,
     onDialog: 'accept',
   })
   check('click reported the dialog it opened', Boolean(answered.dialog), JSON.stringify(answered.dialog ?? null).slice(0, 90))
   check('onDialog answered it in the same call', answered.dialog?.answered === 'accept')
-  const cleared = await callTool('ego_browser_page_info', {})
+  const cleared = await callTool('page_info', {})
   check('page JS resumed after the dialog was answered', !cleared.page?.dialog, `title=${cleared.page?.title}`)
   check('the accepted confirm ran its handler', cleared.page?.title === 'confirmed', cleared.page?.title)
 
   // scroll: a real wheel event must move the document.
-  const scrolled = await callTool('ego_browser_scroll', { dy: 900 })
+  const scrolled = await callTool('scroll', { dy: 900 })
   check('scroll moved the page', (scrolled.page?.sy ?? 0) > 0, `sy=${scrolled.page?.sy} movedY=${scrolled.movedY}`)
 
   // screenshot with no path must land in EGO_BROWSER_OUTPUT_DIR.
-  const shot = await callTool('ego_browser_screenshot', {})
+  const shot = await callTool('screenshot', {})
   const inOutputDir = typeof shot.path === 'string' && shot.path.replace(/\\/g, '/').includes(outputDir.replace(/\\/g, '/'))
   check('screenshot landed in the output dir', inOutputDir, shot.path)
   check('screenshot file is non-empty', existsSync(shot.path) && statSync(shot.path).size > 0, `${existsSync(shot.path) ? statSync(shot.path).size : 0} bytes`)
 
-  const tabs = await callTool('ego_browser_tabs', { action: 'list' })
+  const tabs = await callTool('tabs', { action: 'list' })
   check('tabs list', Array.isArray(tabs.tabs) && tabs.tabs.length > 0, `${tabs.tabs?.length} tab(s)`)
 
-  const spaces = parse(await client.callTool({ name: 'ego_browser_space_list', arguments: {} }))
+  const spaces = parse(await client.callTool({ name: 'space_list', arguments: {} }))
   check('space_list sees this space', (spaces.spaces ?? []).some((s) => String(s.name) === space || String(s.id) === String(openedSpace.activeSpace)), JSON.stringify(spaces.spaces?.map((s) => s.name)))
 } finally {
   if (opened) {
     try {
-      parse(await client.callTool({ name: 'ego_browser_space_close', arguments: { name: space, keep: false } }))
+      parse(await client.callTool({ name: 'space_close', arguments: { name: space, keep: false } }))
       check('space_close', true)
     } catch (error) {
       check('space_close', false, error instanceof Error ? error.message : String(error))

@@ -27,10 +27,10 @@ export function registerArtifactTools(
   isAllowed: (name: string) => boolean,
   config: Partial<McpConfig> = {},
 ): void {
-  if (isAllowed('ego_browser_upload')) {
+  if (isAllowed('upload')) {
     server.registerTool(
-      'ego_browser_upload',
-      { description: 'Set a verified local file on an input[type=file] element.', inputSchema: uploadSchema },
+      'upload',
+      { description: 'Set a local file on an input[type=file].', inputSchema: uploadSchema },
       async (args) => {
         if (!isAbsolute(args.path)) return errorResult('Upload path must be absolute.')
         if (!existsSync(args.path)) return errorResult(`Upload file does not exist: ${args.path}`)
@@ -44,11 +44,11 @@ export function registerArtifactTools(
     )
   }
 
-  if (isAllowed('ego_browser_download')) {
+  if (isAllowed('download')) {
     server.registerTool(
-      'ego_browser_download',
+      'download',
       {
-        description: 'Wait for a browser download, optionally clicking a selector to trigger it, and return the saved path and metadata. Arbitrary trigger scripts are intentionally not allowed in the safe tool.',
+        description: 'Wait for a download, optionally clicking a selector to trigger it; returns the saved path. Selector triggers only, never page scripts.',
         inputSchema: downloadSchema,
       },
       async (args) => {

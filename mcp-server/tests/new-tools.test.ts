@@ -33,7 +33,7 @@ describe('keyboard: a search box can be submitted without the advanced js tool',
   it('focuses the selector, types the text, then presses the key', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    const result = await call(server, 'ego_browser_press', {
+    const result = await call(server, 'press', {
       selector: 'input[name=q]',
       text: 'hermes mcp',
       key: 'Enter',
@@ -50,7 +50,7 @@ describe('keyboard: a search box can be submitted without the advanced js tool',
   it('rejects a press with neither key nor text instead of running an empty script', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    const result = await call(server, 'ego_browser_press', { selector: 'input' })
+    const result = await call(server, 'press', { selector: 'input' })
     expect(result.isError).toBe(true)
     expect(scripts).toHaveLength(0)
   })
@@ -60,7 +60,7 @@ describe('scroll: lazy-loaded content is reachable', () => {
   it('dispatches a real wheel event and reports how far the page moved', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    const result = await call(server, 'ego_browser_scroll', { dy: 900, dx: 0 })
+    const result = await call(server, 'scroll', { dy: 900, dx: 0 })
     expect(result.isError).toBeUndefined()
     expect(last(scripts)).toContain('page.mouse.wheel(0, 900)')
     expect(last(scripts)).toContain('movedY')
@@ -71,7 +71,7 @@ describe('dialog: only the call that opens one can answer it', () => {
   it('answers the dialog in the same script when onDialog is given', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_click', { selector: 'css:#ask', double: false, timeout: 20_000, onDialog: 'accept' })
+    await call(server, 'click', { selector: 'css:#ask', double: false, timeout: 20_000, onDialog: 'accept' })
     const script = last(scripts)
     // settle first: handlers routinely open the dialog a tick after the click returns
     expect(script).toContain('page.waitForTimeout(600)')
@@ -83,30 +83,30 @@ describe('dialog: only the call that opens one can answer it', () => {
   it('dismisses instead of accepting when asked', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_press', { key: 'Enter', onDialog: 'dismiss' })
+    await call(server, 'press', { key: 'Enter', onDialog: 'dismiss' })
     expect(last(scripts)).toContain('accept: false')
   })
 
   it('only reports the dialog when onDialog is omitted, and never stalls a caller that did not ask', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_click', { selector: 'css:#ask', double: false, timeout: 20_000 })
+    await call(server, 'click', { selector: 'css:#ask', double: false, timeout: 20_000 })
     const script = last(scripts)
     expect(script).toContain('dialog: __dialog')
     expect(script).not.toContain('handleJavaScriptDialog')
     expect(script).not.toContain('waitForTimeout(600)')
     // the standalone dialog tool cannot work across processes and must not be advertised
-    expect(toolsOf(server).ego_browser_dialog).toBeUndefined()
+    expect(toolsOf(server).dialog).toBeUndefined()
   })
 
   it('tells an observer how to recover instead of stalling on blocked page JavaScript', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_page_info', {})
+    await call(server, 'page_info', {})
     const script = last(scripts)
     expect(script).toContain('Promise.race')
     expect(script).toContain('onDialog')
-    expect(script).toContain('ego_browser_space_close')
+    expect(script).toContain('space_close')
   })
 })
 
@@ -114,7 +114,7 @@ describe('control: handoff and takeover survive a delegated space', () => {
   it('hands control to the user without calling useOrCreate on the space', async () => {
     const { runner, scripts } = scriptedRunner({ ok: true, done: true })
     const server = createMcpServer({ defaultSpace: 'login-task' }, runner)
-    await call(server, 'ego_browser_control', { action: 'handoff' })
+    await call(server, 'control', { action: 'handoff' })
     expect(last(scripts)).toContain('taskSpaces.handOff("login-task")')
     // useOrCreate throws once the space is delegated to the user, so it must not be emitted here.
     expect(last(scripts)).not.toContain('useOrCreate')
@@ -123,7 +123,7 @@ describe('control: handoff and takeover survive a delegated space', () => {
   it('takes control back without calling useOrCreate on the space', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({ defaultSpace: 'login-task' }, runner)
-    await call(server, 'ego_browser_control', { action: 'takeover' })
+    await call(server, 'control', { action: 'takeover' })
     expect(last(scripts)).toContain('taskSpaces.takeOver("login-task")')
     expect(last(scripts)).not.toContain('useOrCreate')
   })
@@ -133,7 +133,7 @@ describe('space_list and tabs: leftover state is discoverable', () => {
   it('lists task spaces with ownership', async () => {
     const { runner, scripts } = scriptedRunner({ ok: true, spaces: [] })
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_space_list', {})
+    await call(server, 'space_list', {})
     expect(last(scripts)).toContain('taskSpaces.list()')
     expect(last(scripts)).toContain('ownership')
   })
@@ -141,14 +141,14 @@ describe('space_list and tabs: leftover state is discoverable', () => {
   it('closes the current tab when no targetId is given', async () => {
     const { runner, scripts } = scriptedRunner({ ok: true })
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_tabs', { action: 'close' })
+    await call(server, 'tabs', { action: 'close' })
     expect(last(scripts)).toContain('browser.closeTab(undefined)')
   })
 
   it('refuses to switch tabs without a targetId', async () => {
     const { runner, scripts } = scriptedRunner()
     const server = createMcpServer({}, runner)
-    const result = await call(server, 'ego_browser_tabs', { action: 'switch' })
+    const result = await call(server, 'tabs', { action: 'switch' })
     expect(result.isError).toBe(true)
     expect(scripts).toHaveLength(0)
   })
@@ -158,7 +158,7 @@ describe('snapshot: long pages cannot blow up a long-lived chat session', () => 
   it('truncates the returned tree at maxChars and reports the real size', async () => {
     const { runner, scripts } = scriptedRunner({ ok: true, text: 'x', tries: 0 })
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_snapshot', { scope: 'full_page', maxChars: 5000 })
+    await call(server, 'snapshot', { scope: 'full_page', maxChars: 5000 })
     expect(last(scripts)).toContain('full.slice(0, 5000)')
     expect(last(scripts)).toContain('truncated: full.length > 5000')
   })
@@ -171,7 +171,7 @@ describe('artifacts: files land where the agent host can attach them', () => {
     rmSync(outputDir, { recursive: true, force: true })
     const { runner, scripts } = scriptedRunner({ ok: true, path: 'p' })
     const server = createMcpServer({ outputDir }, runner)
-    await call(server, 'ego_browser_screenshot', {})
+    await call(server, 'screenshot', {})
     expect(last(scripts)).toContain('ego-hermes-test-out')
     expect(last(scripts)).toContain('shot-')
     expect(existsSync(outputDir)).toBe(true)
@@ -181,18 +181,18 @@ describe('artifacts: files land where the agent host can attach them', () => {
   it('keeps the runtime default when no output directory is configured', async () => {
     const { runner, scripts } = scriptedRunner({ ok: true, path: 'p' })
     const server = createMcpServer({}, runner)
-    await call(server, 'ego_browser_screenshot', {})
+    await call(server, 'screenshot', {})
     expect(last(scripts)).toContain('await page.screenshot()')
   })
 
   it('warns in the result itself when artifacts have nowhere deliverable to land', async () => {
     const { runner } = scriptedRunner({ ok: true, path: 'p' })
     const server = createMcpServer({}, runner)
-    const shot = JSON.parse((await call(server, 'ego_browser_screenshot', {})).content[0].text)
+    const shot = JSON.parse((await call(server, 'screenshot', {})).content[0].text)
     expect(shot.warning).toContain('EGO_BROWSER_OUTPUT_DIR')
-    const dl = JSON.parse((await call(server, 'ego_browser_download', { timeout: 1000 })).content[0].text)
+    const dl = JSON.parse((await call(server, 'download', { timeout: 1000 })).content[0].text)
     expect(dl.warning).toContain('EGO_BROWSER_OUTPUT_DIR')
-    const status = JSON.parse((await call(server, 'ego_browser_status', {})).content[0].text)
+    const status = JSON.parse((await call(server, 'status', {})).content[0].text)
     expect(status.outputDir).toBeNull()
     expect(status.warning).toContain('EGO_BROWSER_OUTPUT_DIR')
   })
@@ -201,9 +201,9 @@ describe('artifacts: files land where the agent host can attach them', () => {
     const configured = join(tmpdir(), 'ego-hermes-test-out2')
     const { runner } = scriptedRunner({ ok: true, path: 'p' })
     const server = createMcpServer({ outputDir: configured }, runner)
-    const shot = JSON.parse((await call(server, 'ego_browser_screenshot', {})).content[0].text)
+    const shot = JSON.parse((await call(server, 'screenshot', {})).content[0].text)
     expect(shot.warning).toBeUndefined()
-    const status = JSON.parse((await call(server, 'ego_browser_status', {})).content[0].text)
+    const status = JSON.parse((await call(server, 'status', {})).content[0].text)
     expect(status.outputDir).toBe(configured)
     expect(status.warning).toBeUndefined()
     rmSync(configured, { recursive: true, force: true })
@@ -220,9 +220,53 @@ describe('artifacts: files land where the agent host can attach them', () => {
       getStatus: async () => ({ ok: true, available: true, path: 'mock', exitCode: 0 }),
     }
     const server = createMcpServer({}, runner)
-    const result = await call(server, 'ego_browser_download', { timeout: 1000 })
+    const result = await call(server, 'download', { timeout: 1000 })
     expect(result.isError).toBe(true)
     expect(JSON.parse(result.content[0].text).error).toContain('no file path')
+  })
+})
+
+describe('efficiency: fewer round trips, cheaper tool list', () => {
+  it('opens a space and its first page in one call', async () => {
+    const { runner, scripts } = scriptedRunner({ ok: true, id: 7, name: 's' })
+    const server = createMcpServer({}, runner)
+    await call(server, 'space_open', { name: 'discord-1-task', url: 'https://example.com' })
+    const script = last(scripts)
+    expect(script).toContain('taskSpaces.useOrCreate("discord-1-task")')
+    expect(script).toContain('page.goto("https://example.com"')
+    expect(scripts).toHaveLength(1)
+  })
+
+  it('applies the same scheme guard as navigate when opening with a url', async () => {
+    const { runner, scripts } = scriptedRunner()
+    const server = createMcpServer({}, runner)
+    for (const url of ['file:///C:/Windows/win.ini', 'javascript:alert(1)', 'chrome://settings']) {
+      const result = await call(server, 'space_open', { name: 's', url })
+      expect(result.isError).toBe(true)
+    }
+    expect(scripts).toHaveLength(0)
+  })
+
+  it('still opens a bare space when no url is given', async () => {
+    const { runner, scripts } = scriptedRunner({ ok: true, id: 7, name: 's' })
+    const server = createMcpServer({}, runner)
+    await call(server, 'space_open', { name: 's' })
+    expect(last(scripts)).not.toContain('page.goto')
+  })
+
+  it('answers a beforeunload prompt raised by a navigation', async () => {
+    const { runner, scripts } = scriptedRunner()
+    const server = createMcpServer({}, runner)
+    await call(server, 'navigate', { url: 'https://example.com', wait: true, timeout: 500, onDialog: 'accept' })
+    expect(last(scripts)).toContain('Page.handleJavaScriptDialog')
+  })
+
+  it('accepts an allowlist written with the old prefixed tool names', async () => {
+    const server = createMcpServer({ allowedTools: ['ego_browser_status', 'ego_browser_navigate'] })
+    const tools = toolsOf(server)
+    expect(tools.status).toBeDefined()
+    expect(tools.navigate).toBeDefined()
+    expect(tools.snapshot).toBeUndefined()
   })
 })
 
@@ -232,7 +276,7 @@ describe('tool surface', () => {
     const server = createMcpServer({}, runner)
     const tools = toolsOf(server)
     for (const name of DEFAULT_SAFE_TOOLS) expect(tools[name]).toBeDefined()
-    for (const name of ['ego_browser_js', 'ego_browser_cdp', 'ego_browser_cli', 'ego_browser_http']) {
+    for (const name of ['js', 'cdp', 'cli', 'http']) {
       expect(tools[name]).toBeUndefined()
     }
     expect(DEFAULT_SAFE_TOOLS).toHaveLength(17)

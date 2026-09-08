@@ -18,9 +18,7 @@ export const clickSchema = z
   onDialog: z
     .enum(['accept', 'dismiss'])
     .optional()
-    .describe(
-      'What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.',
-    ),
+    .describe('Answer a native dialog this action opens. Only this call can; omit to just report it.'),
   })
   .refine((v) => Boolean(v.selector) || (v.x !== undefined && v.y !== undefined), {
     message: 'Provide selector or both x and y coordinates.',
@@ -51,12 +49,12 @@ export function registerInteractionTools(
   isAllowed: (name: string) => boolean,
   config: Partial<McpConfig> = {},
 ): void {
-  if (isAllowed('ego_browser_click')) {
+  if (isAllowed('click')) {
     server.registerTool(
-      'ego_browser_click',
+      'click',
       {
         description:
-          'Click a selector/ref/locator or viewport coordinates. If the click opens a native dialog it is reported in `dialog`; pass onDialog to answer it in the same call, because no later call can.',
+          'Click a selector/ref/locator or viewport coordinates. Reports any dialog it opens; answer it with onDialog, because no later call can.',
         inputSchema: clickSchema,
       },
       async (args) => {
@@ -81,11 +79,11 @@ export function registerInteractionTools(
     )
   }
 
-  if (isAllowed('ego_browser_fill')) {
+  if (isAllowed('fill')) {
     server.registerTool(
-      'ego_browser_fill',
+      'fill',
       {
-        description: 'Replace the value of an input identified by CSS, xpath, loc, or snapshot ref.',
+        description: 'Replace an input value (CSS, xpath, loc, or snapshot ref).',
         inputSchema: fillSchema,
       },
       async (args) => {
@@ -100,11 +98,11 @@ export function registerInteractionTools(
     )
   }
 
-  if (isAllowed('ego_browser_wait')) {
+  if (isAllowed('wait')) {
     server.registerTool(
-      'ego_browser_wait',
+      'wait',
       {
-        description: 'Pause the current task space for a bounded number of milliseconds.',
+        description: 'Pause the task space for N milliseconds.',
         inputSchema: waitSchema,
       },
       async (args) => {
@@ -117,12 +115,12 @@ export function registerInteractionTools(
     )
   }
 
-  if (isAllowed('ego_browser_screenshot')) {
+  if (isAllowed('screenshot')) {
     server.registerTool(
-      'ego_browser_screenshot',
+      'screenshot',
       {
         description:
-          'Capture a page or element screenshot and return its absolute file path. With EGO_BROWSER_OUTPUT_DIR set, the file lands there so the agent host can attach it to the chat.',
+          'Capture a page or element screenshot; returns its absolute path (inside EGO_BROWSER_OUTPUT_DIR when set, so the host can attach it).',
         inputSchema: screenshotSchema,
       },
       async (args) => {

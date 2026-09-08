@@ -6,10 +6,10 @@ import type { EgoRunner } from '../types.ts'
 import { prepareSpace, runTool } from './shared.ts'
 
 export const ADVANCED_TOOLS = [
-  'ego_browser_js',
-  'ego_browser_cdp',
-  'ego_browser_cli',
-  'ego_browser_http',
+  'js',
+  'cdp',
+  'cli',
+  'http',
 ] as const
 
 const space = z.string().min(1).max(256).optional()
@@ -23,9 +23,9 @@ export function registerAdvancedTools(
 ): void {
   if (!enabled) return
 
-  if (isAllowed('ego_browser_js')) {
+  if (isAllowed('js')) {
     server.registerTool(
-      'ego_browser_js',
+      'js',
       {
         description: 'ADVANCED: evaluate a JavaScript expression in the current page.',
         inputSchema: z.object({ expression: z.string().min(1).max(100_000), space }),
@@ -41,9 +41,9 @@ export function registerAdvancedTools(
     )
   }
 
-  if (isAllowed('ego_browser_cdp')) {
+  if (isAllowed('cdp')) {
     server.registerTool(
-      'ego_browser_cdp',
+      'cdp',
       {
         description: 'ADVANCED: issue a raw Chrome DevTools Protocol command.',
         inputSchema: z.object({
@@ -64,9 +64,9 @@ export function registerAdvancedTools(
     )
   }
 
-  if (isAllowed('ego_browser_cli')) {
+  if (isAllowed('cli')) {
     server.registerTool(
-      'ego_browser_cli',
+      'cli',
       {
         description: 'ADVANCED: execute an arbitrary ego-browser Node script. Disabled unless explicitly enabled and allowlisted.',
         inputSchema: z.object({ script: z.string().min(1).max(200_000) }),
@@ -78,9 +78,9 @@ export function registerAdvancedTools(
     )
   }
 
-  if (isAllowed('ego_browser_http')) {
+  if (isAllowed('http')) {
     server.registerTool(
-      'ego_browser_http',
+      'http',
       {
         description: 'ADVANCED: make an HTTP request from the browser context.',
         inputSchema: z.object({
