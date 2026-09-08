@@ -69,15 +69,20 @@ child.stdout.on('data', (chunk) => {
       const names = (message.result?.tools ?? []).map((tool) => tool.name).sort()
       const expected = [
         'ego_browser_click',
+        'ego_browser_control',
         'ego_browser_download',
         'ego_browser_fill',
         'ego_browser_navigate',
         'ego_browser_page_info',
+        'ego_browser_press',
         'ego_browser_screenshot',
+        'ego_browser_scroll',
         'ego_browser_snapshot',
         'ego_browser_space_close',
+        'ego_browser_space_list',
         'ego_browser_space_open',
         'ego_browser_status',
+        'ego_browser_tabs',
         'ego_browser_upload',
         'ego_browser_wait',
       ].sort()

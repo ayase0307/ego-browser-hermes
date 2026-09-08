@@ -9,6 +9,8 @@ export interface McpConfig {
   enableAdvanced?: boolean
   allowedTools?: string[]
   dataDir?: string
+  /** Directory screenshots/downloads land in when the caller gives no absolute path. */
+  outputDir?: string
 }
 
 export interface EgoScriptResult {

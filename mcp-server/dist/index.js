@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
@@ -227,7 +227,13 @@ const num = (v, fallback) => typeof v === "number" && Number.isFinite(v) ? v : f
 const bool = (v, fallback) => typeof v === "boolean" ? v : fallback;
 const SAFE_FN = "function safe(v){try{return JSON.parse(JSON.stringify(v))}catch{return String(v)}}\n";
 const useSpace = (name) => `const task = await taskSpaces.useOrCreate(${j(name)})\n`;
-const ensureRealTab = () => "const __tabs = await browser.listTabs()\nconst __real = __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\nif (__real) await browser.switchTab(__real.targetId)\n";
+/**
+* Switch to a real page tab, but only when we are not already on one: calling switchTab while a
+* native dialog is open wedges every later page-JavaScript call in that runtime process (verified
+* against real Chromium — page.info() then never resolves), which would make an open dialog
+* impossible to even observe, let alone clear.
+*/
+const ensureRealTab = () => "const __tabs = await browser.listTabs()\nconst __real = __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\nif (__real && !__real.active) await browser.switchTab(__real.targetId)\n";
 /**
 * Scan stdout from bottom to top, find the line with SENTINEL, and parse its JSON payload.
 */
@@ -244,6 +250,16 @@ function parseSentinel(stdout) {
 		}
 	}
 }
+/**
+* A native dialog blocks page JavaScript, and a *later* MCP call cannot clear it: a freshly
+* attached runtime process blocks even on Page.handleJavaScriptDialog (verified against real
+* Chromium). The only process that can deal with a dialog is the one whose action opened it,
+* so actions that can trigger one report it, and optionally answer it, in the same script.
+*/
+const dialogReadback = (onDialog) => {
+	const handle = onDialog === void 0 ? "" : `  await cdp('Page.handleJavaScriptDialog', { accept: ${onDialog === "accept"} })\n  __dialog = { ...__dialog, answered: ${j(onDialog)} }\n  pginfo = await page.info()\n`;
+	return (onDialog === void 0 ? "" : `await page.waitForTimeout(600)\n`) + "let pginfo = await page.info()\nlet __dialog = pginfo && pginfo.dialog ? pginfo.dialog : null\nif (__dialog) {\n" + handle + `}\n`;
+};
 
 //#endregion
 //#region mcp-server/src/runtime/runner.ts
@@ -603,6 +619,12 @@ function errorResult(error) {
 		isError: true
 	};
 }
+/**
+* Without an output directory, artifacts land wherever the runtime chose — a path on the host
+* machine, which a Discord/Telegram user cannot open. The agent has no way to know this from the
+* outside, so every call that produces a file says it.
+*/
+const OUTPUT_DIR_WARNING = "EGO_BROWSER_OUTPUT_DIR is not set, so this file was written wherever the runtime chose. If you cannot attach it to the reply, tell the user to set EGO_BROWSER_OUTPUT_DIR in the Hermes MCP config (hermes mcp add ... --env EGO_BROWSER_OUTPUT_DIR=<a directory Hermes can read>) and restart the server.";
 async function runTool(runner, script, options = {}) {
 	try {
 		const result = await runner.runScript(script, options.timeoutMs === void 0 ? void 0 : { timeoutMs: options.timeoutMs });
@@ -613,10 +635,27 @@ async function runTool(runner, script, options = {}) {
 			return errorResult(typeof record.error === "string" && record.error !== "" ? record.error : typeof record.reason === "string" && record.reason !== "" ? record.reason : "ego-browser command failed");
 		}
 		if (options.active !== void 0 && options.commitSpace) options.commitSpace(options.active);
-		return textResult(value, options.active);
+		return textResult(options.extra && value !== null && typeof value === "object" && !Array.isArray(value) ? {
+			...value,
+			...options.extra
+		} : value, options.active);
 	} catch (error) {
 		return errorResult(error);
 	}
+}
+/**
+* Where an artifact (screenshot/download) should be written when the caller gave no path.
+* Returning a path inside a known output directory is what lets the agent host attach the
+* file to a chat message (Discord/Telegram) instead of quoting a path the user cannot open.
+*/
+function defaultArtifactPath(outputDir, prefix, ext) {
+	if (!outputDir || outputDir.trim() === "" || !isAbsolute(outputDir)) return void 0;
+	try {
+		mkdirSync(outputDir, { recursive: true });
+	} catch {
+		return;
+	}
+	return join(outputDir, `${prefix}-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}${ext}`);
 }
 
 //#endregion
@@ -665,9 +704,17 @@ function registerNavigationTools(server, runner, tracker, isAllowed) {
 //#region mcp-server/src/tools/observation.ts
 const snapshotSchema = z.object({
 	space: z.string().min(1).max(256).optional(),
-	scope: z.enum(["full_page", "only_within_viewport"]).optional().default("full_page")
+	scope: z.enum(["full_page", "only_within_viewport"]).optional().default("full_page"),
+	maxChars: z.number().int().min(1e3).max(2e5).optional().default(2e4).describe("Truncate the returned tree at this many characters (default 20000) to keep long chat sessions affordable.")
 });
 const pageInfoSchema = z.object({ space: z.string().min(1).max(256).optional() });
+/**
+* Page JavaScript is unavailable while a native dialog is open — in a freshly spawned runtime
+* process the call simply never resolves. Racing it turns a full-timeout stall into a fast,
+* actionable error naming the tool that can clear the dialog.
+*/
+const DIALOG_HINT = "page JavaScript is blocked, which almost always means a native alert/confirm/prompt is open. A dialog can only be answered by the call that opened it (pass onDialog to click/press), or by a human clicking it in the browser window. Otherwise close this space with ego_browser_space_close and redo the action with onDialog set.";
+const raceBlocked = (expr, ms = 5e3) => `const __raced = await Promise.race([(async () => ({ v: ${expr} }))(), new Promise(r => setTimeout(() => r({ blocked: true }), ${ms}))])\n`;
 function registerObservationTools(server, runner, tracker, isAllowed) {
 	if (isAllowed("ego_browser_snapshot")) server.registerTool("ego_browser_snapshot", {
 		description: "Read the current page semantic tree as text annotated with refs and stable locators. Retries briefly when a just-navigated page returns an empty capture.",
@@ -675,7 +722,7 @@ function registerObservationTools(server, runner, tracker, isAllowed) {
 	}, async (args) => {
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
 		const call = `await page.snapshotRaw({ scope: ${j(args.scope)} })`;
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}let s = ${call}\nlet tries = 0\nwhile (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\nconst text = s.content ?? ''\nconsole.log('${SENTINEL}' + JSON.stringify(text === '' ? { ok: false, text, tries, reason: 'snapshot returned no content after retries' } : { ok: true, text, tries }))\n`, {
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}` + raceBlocked(call) + `if (__raced.blocked) { console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(DIALOG_HINT)} })); } else {\nlet s = __raced.v\nlet tries = 0\nwhile (!(s.content ?? '') && tries < 3) { await page.waitForTimeout(400); s = ${call}; tries++ }\nconst full = s.content ?? ''\nconst text = full.slice(0, ${args.maxChars})\nconsole.log('${SENTINEL}' + JSON.stringify(full === '' ? { ok: false, text, tries, reason: 'snapshot returned no content after retries' } : { ok: true, text, tries, totalChars: full.length, truncated: full.length > ${args.maxChars} }))\n}\n`, {
 			active: space$1,
 			commitSpace,
 			timeoutMs: 3e4
@@ -686,7 +733,7 @@ function registerObservationTools(server, runner, tracker, isAllowed) {
 		inputSchema: pageInfoSchema
 	}, async (args) => {
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, page: pginfo }))\n`, {
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}` + raceBlocked("await page.info()") + `console.log('${SENTINEL}' + JSON.stringify(__raced.blocked ? { ok: false, error: ${j(DIALOG_HINT)} } : { ok: true, page: __raced.v }))\n`, {
 			active: space$1,
 			commitSpace
 		});
@@ -702,7 +749,8 @@ const clickSchema = z.object({
 	label: z.string().min(1).max(120).optional(),
 	double: z.boolean().optional().default(false),
 	space: z.string().min(1).max(256).optional(),
-	timeout: z.number().int().min(500).max(12e4).optional().default(2e4)
+	timeout: z.number().int().min(500).max(12e4).optional().default(2e4),
+	onDialog: z.enum(["accept", "dismiss"]).optional().describe("What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.")
 }).refine((v) => Boolean(v.selector) || v.x !== void 0 && v.y !== void 0, { message: "Provide selector or both x and y coordinates." });
 const fillSchema = z.object({
 	selector: z.string().min(1).max(4096),
@@ -719,9 +767,9 @@ const screenshotSchema = z.object({
 	path: z.string().min(1).max(32768).optional(),
 	space: z.string().min(1).max(256).optional()
 });
-function registerInteractionTools(server, runner, tracker, isAllowed) {
+function registerInteractionTools(server, runner, tracker, isAllowed, config = {}) {
 	if (isAllowed("ego_browser_click")) server.registerTool("ego_browser_click", {
-		description: "Click a selector/ref/locator or viewport coordinates in the current task space.",
+		description: "Click a selector/ref/locator or viewport coordinates. If the click opens a native dialog it is reported in `dialog`; pass onDialog to answer it in the same call, because no later call can.",
 		inputSchema: clickSchema
 	}, async (args) => {
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
@@ -730,7 +778,7 @@ function registerInteractionTools(server, runner, tracker, isAllowed) {
 			const options = args.label ? `{ label: ${j(args.label)} }` : "";
 			action = args.double ? `await page.locator(${j(args.selector)}).dblclick(${options})` : `await page.locator(${j(args.selector)}).click(${options})`;
 		} else action = args.double ? `await page.mouse.dblclick(${args.x}, ${args.y})` : `await page.mouse.click(${args.x}, ${args.y})`;
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${action}\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, page: pginfo }))\n`, {
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${action}\n` + dialogReadback(args.onDialog) + `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, dialog: __dialog, page: pginfo }))\n`, {
 			active: space$1,
 			commitSpace,
 			timeoutMs: args.timeout + 15e3
@@ -759,17 +807,19 @@ function registerInteractionTools(server, runner, tracker, isAllowed) {
 		});
 	});
 	if (isAllowed("ego_browser_screenshot")) server.registerTool("ego_browser_screenshot", {
-		description: "Capture a page or element screenshot and return the runtime-provided absolute file path.",
+		description: "Capture a page or element screenshot and return its absolute file path. With EGO_BROWSER_OUTPUT_DIR set, the file lands there so the agent host can attach it to the chat.",
 		inputSchema: screenshotSchema
 	}, async (args) => {
 		if (args.path && !isAbsolute(args.path)) return errorResult("Screenshot path must be absolute.");
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
-		const options = args.path ? `{ path: ${j(args.path)} }` : "";
+		const target = args.path ?? defaultArtifactPath(config.outputDir, "shot", ".png");
+		const options = target ? `{ path: ${j(target)} }` : "";
 		const shot = args.selector ? `await page.locator(${j(args.selector)}).screenshot(${options})` : `await page.screenshot(${options})`;
 		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const path = ${shot}\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`, {
 			active: space$1,
 			commitSpace,
-			timeoutMs: 45e3
+			timeoutMs: 45e3,
+			extra: target ? void 0 : { warning: OUTPUT_DIR_WARNING }
 		});
 	});
 }
@@ -787,7 +837,7 @@ const downloadSchema = z.object({
 	timeout: z.number().int().min(500).max(12e4).optional().default(3e4),
 	space: z.string().min(1).max(256).optional()
 });
-function registerArtifactTools(server, runner, tracker, isAllowed) {
+function registerArtifactTools(server, runner, tracker, isAllowed, config = {}) {
 	if (isAllowed("ego_browser_upload")) server.registerTool("ego_browser_upload", {
 		description: "Set a verified local file on an input[type=file] element.",
 		inputSchema: uploadSchema
@@ -807,12 +857,109 @@ function registerArtifactTools(server, runner, tracker, isAllowed) {
 	}, async (args) => {
 		if (args.savePath && !isAbsolute(args.savePath)) return errorResult("Download savePath must be absolute.");
 		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		const saveDir = args.savePath ? void 0 : defaultArtifactPath(config.outputDir, "dl", "");
 		const trigger = args.triggerSelector ? `await page.locator(${j(args.triggerSelector)}).click()\n` : "/* waiting for a download initiated by an earlier action */\n";
-		const save = args.savePath ? `const __final = await __dl.saveAs(${j(args.savePath)}).catch(() => null)\n` : "const __final = await __dl.path().catch(() => null)\n";
-		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const __dlPromise = page.waitForEvent('download', { timeout: ${args.timeout} })\n` + trigger + "const __dl = await __dlPromise\nconst __name = typeof __dl.suggestedFilename === 'function' ? __dl.suggestedFilename() : null\nconst __url = typeof __dl.url === 'function' ? __dl.url() : null\n" + save + `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path: __final, suggestedFilename: __name, url: __url }))\n`, {
+		const save = args.savePath ? `const __final = await __dl.saveAs(${j(args.savePath)}).catch(() => null)\n` : saveDir ? `const __final = await __dl.saveAs(${j(saveDir)} + (__name ? '-' + __name : '.bin')).catch(() => null)\n` : "const __final = await __dl.path().catch(() => null)\n";
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const __dlPromise = page.waitForEvent('download', { timeout: ${args.timeout} })\n` + trigger + "const __dl = await __dlPromise\nconst __name = typeof __dl.suggestedFilename === 'function' ? __dl.suggestedFilename() : null\nconst __url = typeof __dl.url === 'function' ? __dl.url() : null\n" + save + `console.log('${SENTINEL}' + JSON.stringify(__final ? { ok: true, path: __final, suggestedFilename: __name, url: __url } : { ok: false, error: 'download completed but no file path was produced (saveAs failed)', suggestedFilename: __name, url: __url }))\n`, {
 			active: space$1,
 			commitSpace,
-			timeoutMs: args.timeout + 15e3
+			timeoutMs: args.timeout + 15e3,
+			extra: args.savePath || saveDir ? void 0 : { warning: OUTPUT_DIR_WARNING }
+		});
+	});
+}
+
+//#endregion
+//#region mcp-server/src/tools/input.ts
+const spaceArg$1 = z.string().min(1).max(256).optional().describe("Task-space name or id; defaults to the active space.");
+const pressSchema = z.object({
+	key: z.string().min(1).max(200).optional().describe("Key or combo to press, e.g. \"Enter\", \"Tab\", \"Escape\", \"Control+a\"."),
+	text: z.string().max(1e5).optional().describe("Text to type with real key events (for editors that ignore fill)."),
+	selector: z.string().min(1).max(4096).optional().describe("Optional CSS/xpath/ref/loc selector to focus before typing or pressing."),
+	space: spaceArg$1,
+	onDialog: z.enum(["accept", "dismiss"]).optional().describe("What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.")
+}).refine((v) => Boolean(v.key) || Boolean(v.text), { message: "Provide key, text, or both." });
+const scrollSchema = z.object({
+	dy: z.number().int().min(-1e5).max(1e5).optional().default(600).describe("Vertical scroll in CSS pixels (positive scrolls down)."),
+	dx: z.number().int().min(-1e5).max(1e5).optional().default(0).describe("Horizontal scroll in CSS pixels."),
+	space: spaceArg$1
+});
+function registerInputTools(server, runner, tracker, isAllowed) {
+	if (isAllowed("ego_browser_press")) server.registerTool("ego_browser_press", {
+		description: "Send real keyboard input: type text and/or press a key combo, optionally focusing a selector first. Use this to submit a search box with \"Enter\" after fill.",
+		inputSchema: pressSchema
+	}, async (args) => {
+		if (!args.key && !args.text) return errorResult("Provide key, text, or both.");
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		const focus = args.selector ? `await page.locator(${j(args.selector)}).focus()\n` : "";
+		const type = args.text ? `await page.keyboard.type(${j(args.text)})\n` : "";
+		const press = args.key ? `await page.keyboard.press(${j(args.key)})\n` : "";
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}${focus}${type}${press}` + dialogReadback(args.onDialog) + `console.log('${SENTINEL}' + JSON.stringify({ ok: true, typed: ${j(args.text ?? null)}, pressed: ${j(args.key ?? null)}, dialog: __dialog, page: pginfo }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 45e3
+		});
+	});
+	if (isAllowed("ego_browser_scroll")) server.registerTool("ego_browser_scroll", {
+		description: "Scroll the page with a real wheel event and return the new scroll offsets. Needed for lazy-loaded and infinite-scroll content that a snapshot cannot reach.",
+		inputSchema: scrollSchema
+	}, async (args) => {
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		return runTool(runner, `${useSpace(space$1)}${ensureRealTab()}const __before = await page.info()\nawait page.mouse.wheel(${args.dx}, ${args.dy})\nawait page.waitForTimeout(400)\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, dx: ${args.dx}, dy: ${args.dy}, movedY: (pginfo.sy ?? 0) - (__before.sy ?? 0), page: pginfo }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 45e3
+		});
+	});
+}
+
+//#endregion
+//#region mcp-server/src/tools/control.ts
+const spaceArg = z.string().min(1).max(256).optional().describe("Task-space name or id; defaults to the active space.");
+const controlSchema = z.object({
+	action: z.enum(["handoff", "takeover"]).describe("handoff: give browser control to the human (login, CAPTCHA, payment). takeover: resume control — only after the user explicitly confirms they are done."),
+	space: spaceArg
+});
+const spaceListSchema = z.object({});
+const tabsSchema = z.object({
+	action: z.enum([
+		"list",
+		"close",
+		"switch"
+	]).describe("list all tabs, close one, or switch to one."),
+	targetId: z.string().min(1).max(256).optional().describe("Tab targetId from a previous list; close without it closes the current tab."),
+	space: spaceArg
+});
+function registerControlTools(server, runner, tracker, isAllowed) {
+	if (isAllowed("ego_browser_control")) server.registerTool("ego_browser_control", {
+		description: "Hand browser control to the human, or take it back. Only one side holds control at a time: while the user holds it, every other browser call fails with \"user is controlling\". Never take over without an explicit user confirmation.",
+		inputSchema: controlSchema
+	}, async (args) => {
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		return runTool(runner, args.action === "handoff" ? `const res = await taskSpaces.handOff(${j(space$1)})\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, action: 'handoff', done: !!res?.done, skipped: res?.skipped ?? null }))\n` : `await taskSpaces.takeOver(${j(space$1)})\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, action: 'takeover', done: true, page: pginfo }))\n`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 3e4
+		});
+	});
+	if (isAllowed("ego_browser_space_list")) server.registerTool("ego_browser_space_list", {
+		description: "List every task space the runtime knows about, with id, name and ownership. Use it to recover a space after a gateway restart, or to find leftover spaces to close.",
+		inputSchema: spaceListSchema
+	}, async () => {
+		return runTool(runner, `const __spaces = await taskSpaces.list()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, spaces: (__spaces ?? []).map(s => ({ id: s.id ?? null, name: s.name ?? null, ownership: s.ownership ?? null, tabs: s.recentTabTitles ?? [] })) }))\n`, { timeoutMs: 3e4 });
+	});
+	if (isAllowed("ego_browser_tabs")) server.registerTool("ego_browser_tabs", {
+		description: "List, close, or switch tabs inside the task space. Close scratch tabs as you go — navigate reuses tabs by URL, so they otherwise accumulate for the whole session.",
+		inputSchema: tabsSchema
+	}, async (args) => {
+		if (args.action === "switch" && !args.targetId) return errorResult("tabs switch requires targetId (get one from tabs list).");
+		const { space: space$1, commitSpace } = prepareSpace(tracker, args.space);
+		const target = args.targetId ? j(args.targetId) : "undefined";
+		const body = args.action === "list" ? `const __tabs = await browser.listTabs()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, tabs: (__tabs ?? []).map(t => ({ targetId: t.targetId, url: t.url, title: t.title, active: !!t.active })) }))\n` : args.action === "close" ? `await browser.closeTab(${target})\nconst __tabs = await browser.listTabs()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, closed: ${target} ?? 'current', remaining: (__tabs ?? []).length }))\n` : `await browser.switchTab(${target})\nconst pginfo = await page.info()\nconsole.log('${SENTINEL}' + JSON.stringify({ ok: true, switched: ${target}, page: pginfo }))\n`;
+		return runTool(runner, `${useSpace(space$1)}${body}`, {
+			active: space$1,
+			commitSpace,
+			timeoutMs: 3e4
 		});
 	});
 }
@@ -906,6 +1053,7 @@ const DEFAULT_CONFIG = {
 	maxOutputBytes: 4 * 1024 * 1024,
 	graceMs: 15e3,
 	enableAdvanced: process.env.EGO_BROWSER_ENABLE_ADVANCED === "true",
+	outputDir: process.env.EGO_BROWSER_OUTPUT_DIR || void 0,
 	allowedTools: envToolList === void 0 ? void 0 : envToolList.split(",").map((name) => name.trim()).filter(Boolean)
 };
 const DEFAULT_SAFE_TOOLS = [
@@ -918,9 +1066,14 @@ const DEFAULT_SAFE_TOOLS = [
 	"ego_browser_click",
 	"ego_browser_fill",
 	"ego_browser_wait",
+	"ego_browser_press",
+	"ego_browser_scroll",
 	"ego_browser_screenshot",
 	"ego_browser_download",
-	"ego_browser_upload"
+	"ego_browser_upload",
+	"ego_browser_control",
+	"ego_browser_space_list",
+	"ego_browser_tabs"
 ];
 function createMcpServer(userConfig, customRunner) {
 	const config = {
@@ -935,14 +1088,22 @@ function createMcpServer(userConfig, customRunner) {
 	};
 	const server = new McpServer({
 		name: "hermes-ego-browser",
-		version: "0.8.3"
+		version: "0.2.0"
 	});
-	if (isAllowed("ego_browser_status")) server.registerTool("ego_browser_status", { description: "Check whether the ego-browser runtime is available and reachable." }, async () => {
+	if (isAllowed("ego_browser_status")) server.registerTool("ego_browser_status", { description: "Check whether the ego-browser runtime is available and reachable, and whether artifacts have a delivery directory configured." }, async () => {
 		try {
 			const status = await runner.getStatus();
+			const outputDir = config.outputDir ?? null;
 			return { content: [{
 				type: "text",
-				text: JSON.stringify(status, null, 2)
+				text: JSON.stringify(outputDir ? {
+					...status,
+					outputDir
+				} : {
+					...status,
+					outputDir,
+					warning: OUTPUT_DIR_WARNING
+				}, null, 2)
 			}] };
 		} catch (err) {
 			return {
@@ -961,8 +1122,10 @@ function createMcpServer(userConfig, customRunner) {
 	registerSpaceTools(server, runner, tracker, isAllowed);
 	registerNavigationTools(server, runner, tracker, isAllowed);
 	registerObservationTools(server, runner, tracker, isAllowed);
-	registerInteractionTools(server, runner, tracker, isAllowed);
-	registerArtifactTools(server, runner, tracker, isAllowed);
+	registerInteractionTools(server, runner, tracker, isAllowed, config);
+	registerInputTools(server, runner, tracker, isAllowed);
+	registerArtifactTools(server, runner, tracker, isAllowed, config);
+	registerControlTools(server, runner, tracker, isAllowed);
 	registerAdvancedTools(server, runner, tracker, config.enableAdvanced === true, isAllowed);
 	return server;
 }

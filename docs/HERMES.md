@@ -1,6 +1,6 @@
 # Hermes installation
 
-`ego-browser-hermes` exposes the vendored ego-lite runtime to Hermes as a local stdio MCP server. The default surface contains twelve safe tools. Raw JavaScript, CDP, arbitrary CLI scripts, and HTTP requests are disabled by default.
+`ego-browser-hermes` exposes the vendored ego-lite runtime to Hermes as a local stdio MCP server. The default surface contains seventeen safe tools. Raw JavaScript, CDP, arbitrary CLI scripts, and HTTP requests are disabled by default.
 
 ## Requirements
 
@@ -47,15 +47,31 @@ After adding the server, reload MCP in the active session or restart the gateway
 - `ego_browser_status`
 - `ego_browser_space_open`
 - `ego_browser_space_close`
+- `ego_browser_space_list`
 - `ego_browser_navigate`
+- `ego_browser_tabs`
 - `ego_browser_snapshot`
 - `ego_browser_page_info`
 - `ego_browser_click`
 - `ego_browser_fill`
+- `ego_browser_press`
+- `ego_browser_scroll`
 - `ego_browser_wait`
+- `ego_browser_control`
 - `ego_browser_screenshot`
 - `ego_browser_download`
 - `ego_browser_upload`
+
+## Artifact delivery
+
+```text
+EGO_BROWSER_OUTPUT_DIR=D:/Users/msdn/Hermes/ego-browser-out
+```
+
+Screenshots and downloads without an explicit path are written there. Point it at a directory the
+Hermes host can read so long-lived Discord/Telegram sessions can attach the file to a reply; an
+absolute path on the host machine is not a deliverable for a remote user. Without it, artifacts
+stay wherever the runtime puts them.
 
 ## Advanced opt-in
 
@@ -82,4 +98,10 @@ When an allowlist is present, no unlisted safe or advanced tool is registered. A
 - Upload paths must be absolute and exist before the browser runs.
 - Screenshot and download destination paths must be absolute.
 - Safe downloads do not accept arbitrary trigger JavaScript.
-- Keep advanced tools disabled unless a concrete task requires them.
+- Keep advanced tools disabled unless a concrete task requires them; keyboard, scroll and dialog
+  handling are part of the safe surface precisely so nobody enables `js`/`cdp` to press Enter.
+- `ego_browser_control` hands the task space to the user and takes it back only when called
+  explicitly; while the user holds control every other call fails with "user is controlling".
+- Every tool call is its own runtime process. A native dialog blocks page JavaScript for any
+  process that attaches afterwards, so `click`/`press` take `onDialog` to answer one in the same
+  call; `snapshot` and `page_info` detect the blocked state and fail fast with that explanation.

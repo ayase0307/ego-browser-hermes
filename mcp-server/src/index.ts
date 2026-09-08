@@ -7,7 +7,10 @@ import { registerNavigationTools } from './tools/navigation.ts'
 import { registerObservationTools } from './tools/observation.ts'
 import { registerInteractionTools } from './tools/interaction.ts'
 import { registerArtifactTools } from './tools/artifacts.ts'
+import { registerInputTools } from './tools/input.ts'
+import { registerControlTools } from './tools/control.ts'
 import { ADVANCED_TOOLS, registerAdvancedTools } from './tools/advanced.ts'
+import { OUTPUT_DIR_WARNING } from './tools/shared.ts'
 import type { McpConfig, EgoRunner, McpToolResponse } from './types.ts'
 
 export { NodeEgoRunner } from './runtime/runner.ts'
@@ -20,6 +23,7 @@ export const DEFAULT_CONFIG: McpConfig = {
   maxOutputBytes: 4 * 1024 * 1024,
   graceMs: 15_000,
   enableAdvanced: process.env.EGO_BROWSER_ENABLE_ADVANCED === 'true',
+  outputDir: process.env.EGO_BROWSER_OUTPUT_DIR || undefined,
   allowedTools:
     envToolList === undefined
       ? undefined
@@ -36,9 +40,14 @@ export const DEFAULT_SAFE_TOOLS = [
   'ego_browser_click',
   'ego_browser_fill',
   'ego_browser_wait',
+  'ego_browser_press',
+  'ego_browser_scroll',
   'ego_browser_screenshot',
   'ego_browser_download',
   'ego_browser_upload',
+  'ego_browser_control',
+  'ego_browser_space_list',
+  'ego_browser_tabs',
 ] as const
 
 export function createMcpServer(
@@ -61,23 +70,29 @@ export function createMcpServer(
 
   const server = new McpServer({
     name: 'hermes-ego-browser',
-    version: '0.8.3',
+    version: '0.2.0',
   })
 
   if (isAllowed('ego_browser_status')) {
     server.registerTool(
       'ego_browser_status',
       {
-        description: 'Check whether the ego-browser runtime is available and reachable.',
+        description:
+          'Check whether the ego-browser runtime is available and reachable, and whether artifacts have a delivery directory configured.',
       },
       async (): Promise<McpToolResponse> => {
         try {
           const status = await runner.getStatus()
+          const outputDir = config.outputDir ?? null
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify(status, null, 2),
+                text: JSON.stringify(
+                  outputDir ? { ...status, outputDir } : { ...status, outputDir, warning: OUTPUT_DIR_WARNING },
+                  null,
+                  2,
+                ),
               },
             ],
           }
@@ -103,8 +118,10 @@ export function createMcpServer(
   registerSpaceTools(server, runner, tracker, isAllowed)
   registerNavigationTools(server, runner, tracker, isAllowed)
   registerObservationTools(server, runner, tracker, isAllowed)
-  registerInteractionTools(server, runner, tracker, isAllowed)
-  registerArtifactTools(server, runner, tracker, isAllowed)
+  registerInteractionTools(server, runner, tracker, isAllowed, config)
+  registerInputTools(server, runner, tracker, isAllowed)
+  registerArtifactTools(server, runner, tracker, isAllowed, config)
+  registerControlTools(server, runner, tracker, isAllowed)
   registerAdvancedTools(server, runner, tracker, config.enableAdvanced === true, isAllowed)
 
   return server

@@ -2,9 +2,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
-import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
-import type { EgoRunner } from '../types.ts'
-import { errorResult, prepareSpace, runTool } from './shared.ts'
+import { dialogReadback, ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
+import type { EgoRunner, McpConfig } from '../types.ts'
+import { defaultArtifactPath, errorResult, OUTPUT_DIR_WARNING, prepareSpace, runTool } from './shared.ts'
 
 export const clickSchema = z
   .object({
@@ -15,6 +15,12 @@ export const clickSchema = z
     double: z.boolean().optional().default(false),
     space: z.string().min(1).max(256).optional(),
     timeout: z.number().int().min(500).max(120_000).optional().default(20_000),
+  onDialog: z
+    .enum(['accept', 'dismiss'])
+    .optional()
+    .describe(
+      'What to do if this action opens a native alert/confirm/prompt. Omit to only report it — a dialog left open blocks every later call on this space, and no later call can clear it.',
+    ),
   })
   .refine((v) => Boolean(v.selector) || (v.x !== undefined && v.y !== undefined), {
     message: 'Provide selector or both x and y coordinates.',
@@ -43,12 +49,14 @@ export function registerInteractionTools(
   runner: EgoRunner,
   tracker: ActiveSpaceTracker,
   isAllowed: (name: string) => boolean,
+  config: Partial<McpConfig> = {},
 ): void {
   if (isAllowed('ego_browser_click')) {
     server.registerTool(
       'ego_browser_click',
       {
-        description: 'Click a selector/ref/locator or viewport coordinates in the current task space.',
+        description:
+          'Click a selector/ref/locator or viewport coordinates. If the click opens a native dialog it is reported in `dialog`; pass onDialog to answer it in the same call, because no later call can.',
         inputSchema: clickSchema,
       },
       async (args) => {
@@ -66,8 +74,8 @@ export function registerInteractionTools(
         }
         const script =
           `${useSpace(space)}${ensureRealTab()}${action}\n` +
-          `const pginfo = await page.info()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, page: pginfo }))\n`
+          dialogReadback(args.onDialog) +
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${args.double}, dialog: __dialog, page: pginfo }))\n`
         return runTool(runner, script, { active: space, commitSpace, timeoutMs: args.timeout + 15_000 })
       },
     )
@@ -113,20 +121,27 @@ export function registerInteractionTools(
     server.registerTool(
       'ego_browser_screenshot',
       {
-        description: 'Capture a page or element screenshot and return the runtime-provided absolute file path.',
+        description:
+          'Capture a page or element screenshot and return its absolute file path. With EGO_BROWSER_OUTPUT_DIR set, the file lands there so the agent host can attach it to the chat.',
         inputSchema: screenshotSchema,
       },
       async (args) => {
         if (args.path && !isAbsolute(args.path)) return errorResult('Screenshot path must be absolute.')
         const { space, commitSpace } = prepareSpace(tracker, args.space)
-        const options = args.path ? `{ path: ${j(args.path)} }` : ''
+        const target = args.path ?? defaultArtifactPath(config.outputDir, 'shot', '.png')
+        const options = target ? `{ path: ${j(target)} }` : ''
         const shot = args.selector
           ? `await page.locator(${j(args.selector)}).screenshot(${options})`
           : `await page.screenshot(${options})`
         const script =
           `${useSpace(space)}${ensureRealTab()}const path = ${shot}\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`
-        return runTool(runner, script, { active: space, commitSpace, timeoutMs: 45_000 })
+        return runTool(runner, script, {
+          active: space,
+          commitSpace,
+          timeoutMs: 45_000,
+          extra: target ? undefined : { warning: OUTPUT_DIR_WARNING },
+        })
       },
     )
   }

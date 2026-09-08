@@ -4,8 +4,8 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import type { ActiveSpaceTracker } from '../runtime/config.ts'
 import { ensureRealTab, j, SENTINEL, useSpace } from '../runtime/sentinel.ts'
-import type { EgoRunner } from '../types.ts'
-import { errorResult, prepareSpace, runTool } from './shared.ts'
+import type { EgoRunner, McpConfig } from '../types.ts'
+import { defaultArtifactPath, errorResult, OUTPUT_DIR_WARNING, prepareSpace, runTool } from './shared.ts'
 
 export const uploadSchema = z.object({
   selector: z.string().min(1).max(4096),
@@ -25,6 +25,7 @@ export function registerArtifactTools(
   runner: EgoRunner,
   tracker: ActiveSpaceTracker,
   isAllowed: (name: string) => boolean,
+  config: Partial<McpConfig> = {},
 ): void {
   if (isAllowed('ego_browser_upload')) {
     server.registerTool(
@@ -53,12 +54,15 @@ export function registerArtifactTools(
       async (args) => {
         if (args.savePath && !isAbsolute(args.savePath)) return errorResult('Download savePath must be absolute.')
         const { space, commitSpace } = prepareSpace(tracker, args.space)
+        const saveDir = args.savePath ? undefined : defaultArtifactPath(config.outputDir, 'dl', '')
         const trigger = args.triggerSelector
           ? `await page.locator(${j(args.triggerSelector)}).click()\n`
           : '/* waiting for a download initiated by an earlier action */\n'
         const save = args.savePath
           ? `const __final = await __dl.saveAs(${j(args.savePath)}).catch(() => null)\n`
-          : 'const __final = await __dl.path().catch(() => null)\n'
+          : saveDir
+            ? `const __final = await __dl.saveAs(${j(saveDir)} + (__name ? '-' + __name : '.bin')).catch(() => null)\n`
+            : 'const __final = await __dl.path().catch(() => null)\n'
         const script =
           `${useSpace(space)}${ensureRealTab()}` +
           `const __dlPromise = page.waitForEvent('download', { timeout: ${args.timeout} })\n` +
@@ -67,8 +71,15 @@ export function registerArtifactTools(
           "const __name = typeof __dl.suggestedFilename === 'function' ? __dl.suggestedFilename() : null\n" +
           "const __url = typeof __dl.url === 'function' ? __dl.url() : null\n" +
           save +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path: __final, suggestedFilename: __name, url: __url }))\n`
-        return runTool(runner, script, { active: space, commitSpace, timeoutMs: args.timeout + 15_000 })
+          `console.log('${SENTINEL}' + JSON.stringify(__final ? ` +
+          `{ ok: true, path: __final, suggestedFilename: __name, url: __url } : ` +
+          `{ ok: false, error: 'download completed but no file path was produced (saveAs failed)', suggestedFilename: __name, url: __url }))\n`
+        return runTool(runner, script, {
+          active: space,
+          commitSpace,
+          timeoutMs: args.timeout + 15_000,
+          extra: args.savePath || saveDir ? undefined : { warning: OUTPUT_DIR_WARNING },
+        })
       },
     )
   }
